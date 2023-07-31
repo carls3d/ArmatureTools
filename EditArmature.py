@@ -5,7 +5,7 @@ import bpy
 #todo     - transfer to parent if there is one, else transfer to child
 #todo     - Check if more than one child
 #todo         1. Transfer to child with longest chain
-#todo         2. Spread weights to all children
+#todo         2. Spread weights to all children?
 
 #TODO - merge chains (average pos of "loop_bones", all weights of loop_bones to all verts affected by "loop_bones")
 #todo - Resample chain 1.(separate mesh and reapply weights) or 2.(set new weights with math)
@@ -20,25 +20,6 @@ import bpy
 #note     chain - run function on entire chain of selected bones (ex: select first bones of chains in the outliner)
 #note     auto - complex operation
 
-
-def planning():
-    ...
-    # Get active object
-    # Assert
-    # In edit mode
-    # Assert edit mode or pose mode
-    # Get armature of active object
-
-    # Operator1: Dissolve -> transfer weights
-    # Get selected bones
-
-    #   1. Get all objects with armature modifier
-    #   2. Get all objects with vertex groups of selected bones
-    # Store info in dict
-    # {bone1: [obj1, obj2, obj3], bone2: [obj1, obj2, obj3]]}
-
-    # obj1: {vertex_group:{vertindex: weight, ...}, ...}
-    # vertex_group: {obj1: {vertindex: weight, ...}, ...}
 
 def recursive_dict_print(item:dict) -> None:
     """Print a nested dict in a readable format"""
@@ -100,39 +81,6 @@ def interactive_popup(title:str = "Title", content:dict = {"Title":{"type":"labe
                     setattr(op, prop, value)
     bpy.context.window_manager.popup_menu(popup, title=title, icon=icon) 
 
-# def set_mode_paint(meshobj:bpy.types.Object):
-#     assert len(bpy.context.selected_objects) > 1, "Expected 2 or more selected objects"
-#     assert meshobj.parent, "Mesh object has no parent armature"
-#     assert meshobj.parent.type != 'ARMATURE', "Mesh object parent is not an armature"
-#     assert meshobj.modifiers, "Mesh object has no modifiers"
-#     armature_modifiers = {m.object: m for m in meshobj.modifiers if m.type == 'ARMATURE'}
-#     assert armature_modifiers, "Mesh object has no armature modifiers"
-    
-#     if meshobj.parent not in armature_modifiers:
-#         [*armature_modifiers.values()][0].object = meshobj.parent
-    
-#     bpy.ops.object.mode_set(mode='OBJECT')
-#     meshobj.parent.select_set(True)
-#     bpy.context.view_layer.objects.active = meshobj
-#     bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
-
-# def set_mode_edit():
-#     mode = bpy.context.mode
-#     if mode == 'POSE':
-#         bpy.ops.object.mode_set(mode='EDIT')
-#     if mode == 'PAINT_WEIGHT':
-#         bpy.ops.object.mode_set(mode='OBJECT')
-#         bpy.context.view_layer.objects.active = bpy.context.object.parent
-#         bpy.ops.object.mode_set(mode='EDIT')
-    
-# def set_mode_pose():
-#     mode = bpy.context.mode
-#     if mode == 'EDIT_ARMATURE':
-#         bpy.ops.object.mode_set(mode='POSE')
-#     if mode == 'PAINT_WEIGHT':
-#         bpy.ops.object.mode_set(mode='OBJECT')
-#         bpy.context.view_layer.objects.active = bpy.context.object.parent
-#         bpy.ops.object.mode_set(mode='POSE')
 
 #SECTION ------------ Common operations ------------
 class EditFuncs:
