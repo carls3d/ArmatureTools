@@ -1,4 +1,4 @@
-# ArmatureTools
+# Armature Tools
 Armature Tools can quickly generate and edit weighted bones.
 <br>It is intended for, but not limited to simple meshes like hair-meshes/cards, tails, tubes, etc. (Also works for curves, but does not apply weights)
 <br>Removing / editing weighted bones usually comes with extra work in weight painting, which this add-on aim's to speed up significantly.
