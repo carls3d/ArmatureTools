@@ -5,9 +5,10 @@ Armature Tools can quickly generate and edit weighted bones.
 ![ArmatureTools_product_placement_stores](https://github.com/carls3d/ArmatureTools/assets/104013959/098abe73-d20f-480c-a76b-e18688ecfb31)
 
 ## Note
-Files were made to be injected into a class through Serpens(Add-on), where the UI is made.
+This repository was made public for others to learn / contribute if they wish.
 
-I don't reccomend keeping everything in one file like I've done here as it becomes exponentially harder to read. 
+Files are meant to be injected into a class with [Serpens](https://blendermarket.com/products/serpens), where the UI is made.
+<br>I don't reccomend keeping everything in one file like I've done here as it becomes much harder to read.
 <br>&nbsp;&nbsp;&nbsp;&nbsp;*I might find a solution to this in the future*
 
 ## Download
