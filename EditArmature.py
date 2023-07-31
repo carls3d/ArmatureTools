@@ -81,7 +81,34 @@ def interactive_popup(title:str = "Title", content:dict = {"Title":{"type":"labe
                     setattr(op, prop, value)
     bpy.context.window_manager.popup_menu(popup, title=title, icon=icon) 
 
-
+def collection_excluded(obj:bpy.types.Object, unhide:bool=False) -> bool:
+    """
+    Unexclude & unhide collection if unhide is True\n
+    Returns False object is in any visible collection, else returns True
+    """
+    collections = [col for col in obj.users_collection]
+    viewl_col = bpy.context.view_layer.layer_collection.children
+    
+    # Force show collection
+    if unhide:
+        collections[0].hide_viewport = False
+        viewl_col[collections[0].name].hide_viewport = False
+        viewl_col[collections[0].name].exclude = False
+    
+    # Check if object is in excluded collection
+    visible_collection = [not any([
+        col.hide_viewport, 
+        viewl_col[col.name].hide_viewport, 
+        viewl_col[col.name].exclude
+        ]) for col in collections]
+    
+    print(obj.name, any(visible_collection))
+    # If object is in any visible collection, return False
+    if any(visible_collection):
+        return False
+    else:
+        return True
+    
 #SECTION ------------ Common operations ------------
 class EditFuncs:
     
@@ -632,38 +659,74 @@ def editbones_chain_trim(start:float=0.0, end:float=1.0) -> None:
 #     # Automatic version of chain_merge
 #     ...
 
-def editbones_set_mode(mode:str):
+def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
     """["OBJECT", "EDIT", "POSE", "PAINT_WEIGHT"]"""
+    def get_meshes(arm:bpy.types.Object) -> set[bpy.types.Object]:
+        """Valid meshes connected to the armature as a modifier or parent"""
+        objects = bpy.data.objects
+        meshes = {ob for ob in objects if ob in arm.children and ob.type == 'MESH'}
+        meshes |= {ob for ob in objects if ob.type == 'MESH' and ob.modifiers and arm in [mod.object for mod in ob.modifiers if mod.type == 'ARMATURE']}
+        return meshes
+    
+    def select_menu(meshes:set[bpy.types.Object]) -> None:
+        """If more than one valid mesh is detected, prompt user to select one"""
+        title = f"Select which mesh to use:"
+        content = {
+            ob.name: {
+                "type": "button", 
+                "op": "sna.set_paint_mode", 
+                "prop": {
+                    "pattern": ob.name, 
+                    "extend": True,
+                    "unhide": unhide}, 
+                "icon": "MESH_DATA"
+                } for ob in meshes}
+        interactive_popup(title=title, content=content, icon='VPAINT_HLT')
+    
     obj = bpy.context.object
-    #FIXME - Force visibility of armature -> error if not visible after
+    
     error_dict = {
         obj.type not in ['MESH', 'ARMATURE']: "Invalid object type",
-        obj.type == 'MESH' and not obj.parent: "Mesh object has no parent armature",
-        obj.type == 'MESH' and obj.parent and obj.parent.type != 'ARMATURE': "Mesh object parent is not an armature"
+        obj.type == 'MESH' and not obj.parent: "Mesh has no parent armature",
+        obj.type == 'ARMATURE' and not obj.children: "Armature has no valid meshes",
+        obj.type == 'MESH' and obj.parent and obj.parent.type != 'ARMATURE': "Mesh parent is not an armature",
     }
     for error in error_dict:
         if error:
-            return popup_window(title="Error", text=error_dict[error], icon='ERROR')
+            return popup_window(text=error_dict[error])
     
-    if mode == 'OBJECT':
+    if unhide and set_mode in ['OBJECT', 'EDIT', 'POSE']:
+        if obj.type == 'MESH':
+            obj.parent.hide_set(False) 
+            obj.parent.hide_viewport = False
+            if collection_excluded(obj.parent, unhide=unhide):
+                return popup_window(text=f"Unable to unhide '{obj.parent.name}'")
+        if obj.type == 'ARMATURE':
+            obj.hide_set(False)
+            obj.hide_viewport = False
+            if collection_excluded(obj, unhide=unhide):
+                return popup_window(text=f"Unable to unhide '{obj.name}'")
+
+    
+    if set_mode == 'OBJECT':
         if obj.type == 'MESH':
             obj = obj.parent
-        bpy.ops.object.mode_set(mode='OBJECT')
-        bpy.ops.object.select_pattern(pattern=obj.name, extend=False)
-        bpy.context.view_layer.objects.active = obj
         if bpy.context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.select_pattern(pattern=obj.name, extend=False)
+        bpy.context.view_layer.objects.active = obj
         return
     
-    if mode in ['EDIT', 'POSE']:
+    
+    if set_mode in ['EDIT', 'POSE']:
         if obj.type == 'MESH':
             if bpy.context.mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode='OBJECT')
             armature = obj.parent
             armature.select_set(True)
             bpy.context.view_layer.objects.active = armature
-            
-        bpy.ops.object.mode_set(mode=mode)
+        
+        bpy.ops.object.mode_set(mode=set_mode)
         selected = bpy.context.selected_objects
         in_mode = bpy.context.objects_in_mode
         for ob in selected:
@@ -675,47 +738,55 @@ def editbones_set_mode(mode:str):
         return
     
     
-    if mode == 'PAINT_WEIGHT':
+    if set_mode == 'PAINT_WEIGHT':
+        
         if obj.type == 'MESH':
-            if bpy.context.mode != 'OBJECT':
-                bpy.ops.object.mode_set(mode='OBJECT')
             armature = obj.parent
-            armature.select_set(True)
-            bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+            if bpy.context.mode == 'PAINT_WEIGHT':
+                meshes = get_meshes(armature)
+                if len(meshes) <= 1: return
+                select_menu(meshes)
+            else:
+                # Ensure object mode
+                if bpy.context.mode != 'OBJECT':
+                    bpy.ops.object.mode_set(mode='OBJECT')
+                    
+                # Check if armature is in an excluded/hidden collection
+                if collection_excluded(obj=armature, unhide=unhide): 
+                    return popup_window(text=f"Armature {obj.parent.name} in hidden collection")
+                # Check if armature object is hidden
+                if not obj.parent.visible_get(): 
+                    return popup_window(text=f"Armature {armature.name} is hidden")
+                
+                armature.select_set(True)
+                bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+            return
     
         if obj.type == 'ARMATURE':
             objects = bpy.data.objects
+            meshes = get_meshes(obj)
             
-            # Valid meshes that are connected to the armature through a modifier or parent
-            meshes = {ob.name for ob in objects if ob in obj.children and ob.type == 'MESH'}
-            meshes |= {ob.name for ob in objects if ob.type == 'MESH' and ob.modifiers and obj in [mod.object for mod in ob.modifiers if mod.type == 'ARMATURE']}
-            
-            # If valid armature is selected, use it
+            # If valid mesh is selected with armature, use it. 
             selected = bpy.context.selected_objects
-            valid_selected = [sel.name for sel in selected if sel.name in meshes]
+            valid_selected = [sel for sel in selected if sel in meshes]
             if len(valid_selected) == 1:
                 bpy.context.view_layer.objects.active = objects[valid_selected[0]]
                 bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
                 return
             
-            #TODO - make this a setting
-            # elif len(valid_selected) > 1:
-            #     meshes = valid_selected
+            # If only one valid mesh is found, use it
+            elif len(meshes) == 1:
+                bpy.context.view_layer.objects.active = objects[meshes.pop().name]
+                bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+                return
             
             if len(meshes) < 1: 
-                return popup_window(title="Error", text=f"No valid meshes found for {obj.name}", icon='ERROR')
+                return popup_window(text=f"No valid meshes found for {obj.name}")
             
-            # If no valid armature is selected, prompt user to select one
-            title = f"Select which mesh to use:"
-            content = {
-                ob: {
-                    "type": "button", 
-                    "op": "sna.set_paint_mode", 
-                    "prop": {"pattern": ob, "extend": True}, 
-                    "icon": "MESH_DATA"
-                    } for ob in meshes}
-            interactive_popup(title=title, content=content, icon='VPAINT_HLT')
-        return
+            # Prompt user to select one from all valid meshes
+            select_menu(meshes)
+            return
+        
     return
 
 
@@ -728,15 +799,50 @@ class SetPaintMode(bpy.types.Operator):
 
     pattern: bpy.props.StringProperty(default="*")
     extend: bpy.props.BoolProperty(default=False)
+    unhide: bpy.props.BoolProperty(default=False)
 
     @classmethod
     def poll(cls, context):
         return True
 
     def execute(self, context):
-        bpy.ops.object.select_pattern(pattern=self.pattern, extend=self.extend)
-        bpy.context.view_layer.objects.active = bpy.data.objects[self.pattern]
-        bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+        obj = bpy.data.objects[self.pattern]
+        
+        # Unhide mesh
+        if self.unhide and not obj.visible_get():
+            obj.hide_set(False)
+            obj.hide_viewport = False
+            obj.parent.hide_set(False)
+            obj.parent.hide_viewport = False    
+        
+        if collection_excluded(obj=obj, unhide=self.unhide): # Check if object is in excluded/hidden collection
+            popup_window(text=f"Mesh {obj.name} in hidden collection")
+            return {"CANCELLED"}
+        if collection_excluded(obj=obj.parent, unhide=self.unhide): # Check if object is in excluded/hidden collection
+            popup_window(text=f"Armature {obj.parent.name} in hidden collection")
+            return {"CANCELLED"}
+        if not obj.visible_get(): # Check if mesh object is hidden
+            popup_window(text=f"Mesh {obj.name} is hidden")
+            return {"CANCELLED"}
+        if not obj.parent.visible_get(): # Check if armature object is hidden
+            popup_window(text=f"Armature {obj.parent.name} is hidden")
+            return {"CANCELLED"}
+        
+        # Set object mode and clear selection
+        if bpy.context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.select_all(action='DESELECT')
+        
+        # Select armature
+        obj.parent.select_set(True)
+        # Select mesh and set active
+        obj.select_set(True)
+        # bpy.ops.object.select_pattern(pattern=self.pattern, extend=self.extend)
+        bpy.context.view_layer.objects.active = obj
+        # Set mode
+        bpy.ops.paint.weight_paint_toggle()
+        # bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+        
         return {"FINISHED"}
 
 
