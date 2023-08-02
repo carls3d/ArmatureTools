@@ -665,19 +665,19 @@ mix_mode             = is_local('mix_mode', 'REPLACE')
 dist                 = is_local('dist', 0.12)
 fac                  = is_local('fac', 0.0)
 self                 = is_local('self', None)
-debug                = is_local('debug', True)
+debug                = is_local('debug', False)
 report = self.report if self else print
 
 def main():
     print("------------- CTools Armature generator -------------\n")
     obj = bpy.context.active_object
     obj_mode = bpy.context.object.mode
-    if not obj: 
-        report({'ERROR'}, "No active object"); return
+    assert obj, "No active object"
+    assert obj.visible_get(), "Object is hidden"
+    
     if obj.type == 'MESH' and obj_mode == 'EDIT':
-        obj.update_from_editmode()
-        if not any([v.select for v in obj.data.vertices]): 
-            report({'ERROR'}, "No vertices selected"); return
+        assert obj.data.total_vert_sel, "No vertices selected"
+    
     # Using "if, elif" instead of "case" statements for downgradability
     if execute_type in ['CURVE', 'CURVES']:
         assert 'CURVE' in obj.type, "Object is not a curve"
