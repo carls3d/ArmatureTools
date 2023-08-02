@@ -659,7 +659,7 @@ def editbones_chain_trim(start:float=0.0, end:float=1.0) -> None:
 #     # Automatic version of chain_merge
 #     ...
 
-def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
+def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> None:
     """["OBJECT", "EDIT", "POSE", "PAINT_WEIGHT"]"""
     def get_meshes(arm:bpy.types.Object) -> set[bpy.types.Object]:
         """Valid meshes connected to the armature as a modifier or parent"""
@@ -677,7 +677,7 @@ def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
                 "op": "sna.set_paint_mode", 
                 "prop": {
                     "pattern": ob.name, 
-                    "extend": True,
+                    "extend": extend,
                     "unhide": unhide}, 
                 "icon": "MESH_DATA"
                 } for ob in meshes}
@@ -695,25 +695,34 @@ def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
         if error:
             return popup_window(text=error_dict[error])
     
-    if unhide and set_mode in ['OBJECT', 'EDIT', 'POSE']:
+    # Force unhide
+    if unhide and set_mode in ['OBJECT', 'EDIT', 'POSE', 'PAINT_WEIGHT']:
+        # Unhide object
+        obj.hide_set(False)
+        obj.hide_viewport = False
+        if collection_excluded(obj, unhide=unhide):
+            return popup_window(text=f"Unable to unhide '{obj.name}'")
+        
+        # Unhide parent armature if mesh
         if obj.type == 'MESH':
             obj.parent.hide_set(False) 
             obj.parent.hide_viewport = False
             if collection_excluded(obj.parent, unhide=unhide):
                 return popup_window(text=f"Unable to unhide '{obj.parent.name}'")
-        if obj.type == 'ARMATURE':
-            obj.hide_set(False)
-            obj.hide_viewport = False
-            if collection_excluded(obj, unhide=unhide):
-                return popup_window(text=f"Unable to unhide '{obj.name}'")
+            obj.parent.select_set(True) # Ensure armature is selected after unhide
+        
+        # Ensure active is selected after unhide
+        obj.select_set(True)
 
     
     if set_mode == 'OBJECT':
-        if obj.type == 'MESH':
-            obj = obj.parent
+        obj = obj.parent if obj.type == 'MESH' else obj
+        if not obj.visible_get():
+            return popup_window(text=f"Unable to enter '{set_mode}' mode while '{obj.name}' is hidden")
+        
         if bpy.context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        bpy.ops.object.select_pattern(pattern=obj.name, extend=False)
+        bpy.ops.object.select_pattern(pattern=obj.name, extend=extend)
         bpy.context.view_layer.objects.active = obj
         return
     
@@ -725,10 +734,14 @@ def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
             armature = obj.parent
             armature.select_set(True)
             bpy.context.view_layer.objects.active = armature
+            if not armature.visible_get():
+                return popup_window(text=f"Unable to enter '{set_mode}' mode while '{obj.name}' is hidden")
         
         bpy.ops.object.mode_set(mode=set_mode)
         selected = bpy.context.selected_objects
         in_mode = bpy.context.objects_in_mode
+        if extend: 
+            return
         for ob in selected:
             # Skip objects that are in the mode
             if ob in in_mode:
@@ -739,7 +752,6 @@ def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
     
     
     if set_mode == 'PAINT_WEIGHT':
-        
         if obj.type == 'MESH':
             armature = obj.parent
             if bpy.context.mode == 'PAINT_WEIGHT':
@@ -747,16 +759,26 @@ def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
                 if len(meshes) <= 1: return
                 select_menu(meshes)
             else:
+                # Check if mesh is hidden
+                if not obj.visible_get():
+                    return popup_window(text=f"Unable to enter '{set_mode}' mode while '{obj.name}' is hidden")
+                
                 # Ensure object mode
                 if bpy.context.mode != 'OBJECT':
                     bpy.ops.object.mode_set(mode='OBJECT')
-                    
+                
+                # Unhide armature
+                if unhide:
+                    armature.hide_set(False)
+                    armature.hide_viewport = False
+                
                 # Check if armature is in an excluded/hidden collection
                 if collection_excluded(obj=armature, unhide=unhide): 
-                    return popup_window(text=f"Armature {obj.parent.name} in hidden collection")
+                    return popup_window(text=f"Armature '{obj.parent.name}' in hidden collection")
+                
                 # Check if armature object is hidden
                 if not obj.parent.visible_get(): 
-                    return popup_window(text=f"Armature {armature.name} is hidden")
+                    return popup_window(text=f"Armature '{armature.name}' is hidden")
                 
                 armature.select_set(True)
                 bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
@@ -770,12 +792,14 @@ def editbones_set_mode(set_mode:str, unhide:bool=True) -> None:
             selected = bpy.context.selected_objects
             valid_selected = [sel for sel in selected if sel in meshes]
             if len(valid_selected) == 1:
-                bpy.context.view_layer.objects.active = objects[valid_selected[0]]
+                obj.select_set(True)
+                bpy.context.view_layer.objects.active = objects[valid_selected[0].name]
                 bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
                 return
             
             # If only one valid mesh is found, use it
             elif len(meshes) == 1:
+                obj.select_set(True)
                 bpy.context.view_layer.objects.active = objects[meshes.pop().name]
                 bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
                 return
@@ -815,33 +839,38 @@ class SetPaintMode(bpy.types.Operator):
             obj.parent.hide_set(False)
             obj.parent.hide_viewport = False    
         
-        if collection_excluded(obj=obj, unhide=self.unhide): # Check if object is in excluded/hidden collection
-            popup_window(text=f"Mesh {obj.name} in hidden collection")
+        # Check if object is in excluded/hidden collection
+        if collection_excluded(obj=obj, unhide=self.unhide): 
+            popup_window(text=f"Mesh '{obj.name}' in hidden collection")
             return {"CANCELLED"}
-        if collection_excluded(obj=obj.parent, unhide=self.unhide): # Check if object is in excluded/hidden collection
-            popup_window(text=f"Armature {obj.parent.name} in hidden collection")
+        # Check if object is in excluded/hidden collection
+        if collection_excluded(obj=obj.parent, unhide=self.unhide): 
+            popup_window(text=f"Armature '{obj.parent.name}' in hidden collection")
             return {"CANCELLED"}
-        if not obj.visible_get(): # Check if mesh object is hidden
-            popup_window(text=f"Mesh {obj.name} is hidden")
+        # Check if mesh object is hidden
+        if not obj.visible_get(): 
+            popup_window(text=f"Mesh '{obj.name}' is hidden")
             return {"CANCELLED"}
-        if not obj.parent.visible_get(): # Check if armature object is hidden
-            popup_window(text=f"Armature {obj.parent.name} is hidden")
+        # Check if armature object is hidden
+        if not obj.parent.visible_get(): 
+            popup_window(text=f"Armature '{obj.parent.name}' is hidden")
             return {"CANCELLED"}
         
-        # Set object mode and clear selection
+        # Set object mode
         if bpy.context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        bpy.ops.object.select_all(action='DESELECT')
         
-        # Select armature
+        # Clear selection
+        if not self.extend:
+            bpy.ops.object.select_all(action='DESELECT')
+        
+        # Select armature and mesh, set mesh as active
         obj.parent.select_set(True)
-        # Select mesh and set active
         obj.select_set(True)
-        # bpy.ops.object.select_pattern(pattern=self.pattern, extend=self.extend)
         bpy.context.view_layer.objects.active = obj
+        
         # Set mode
         bpy.ops.paint.weight_paint_toggle()
-        # bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
         
         return {"FINISHED"}
 
