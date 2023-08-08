@@ -158,6 +158,7 @@ class EditFuncs:
                 armature = bone.id_data.edit_bones
                 edit_bone = armature[bone.name]
                 armature.remove(edit_bone)
+                
         if bpy.context.mode == 'PAINT_WEIGHT':
             obj = bpy.context.object
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -172,6 +173,57 @@ class EditFuncs:
             remove_bones()
             bpy.ops.object.mode_set(mode='POSE')
     
+    @staticmethod
+    def cleanup_bones_dissolve(bones_dict:dict) -> None:
+        """Dissolve bones"""
+        def dissolve_bones():
+            for target_bone, children in bones_dict.items():
+                if len(children) < 1: continue
+                
+                # Edit bones for editing armature (Edit mode is required)
+                edit_bones:bpy.types.ArmatureEditBones = target_bone.id_data.edit_bones
+                parent = edit_bones[target_bone.name]
+                children_recursive = parent.children_recursive
+                
+                # Disconnect unselected children, if target bone has more than 1 child
+                if len(target_bone.children) > 1:
+                    for target_child in target_bone.children:
+                        if target_child in children: continue
+                        child_bone = edit_bones[target_child.name]
+                        edit_bones[target_child.name].use_connect = False
+                
+                for i, child in enumerate(children):
+                    child_bone = edit_bones[child.name]
+                    # Store tail location of last child
+                    if i == len(children) - 1:
+                        location = child_bone.tail
+                    # Store connected bones
+                    connect = [bone for bone in child_bone.children if bone.use_connect]
+                    # Remove child bone
+                    children_recursive.remove(child_bone)
+                    edit_bones.remove(child_bone)
+                    for bone in connect:
+                        bone.use_connect = True
+                
+                # Set target bone tail location
+                parent.tail = location
+                
+        
+        
+        if bpy.context.mode == 'PAINT_WEIGHT':
+            obj = bpy.context.object
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.context.view_layer.objects.active = bpy.context.object.parent
+            bpy.ops.object.mode_set(mode='EDIT')
+            dissolve_bones()
+            bpy.ops.object.mode_set(mode='OBJECT')
+            bpy.context.view_layer.objects.active = obj
+            bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+        else:
+            bpy.ops.object.mode_set(mode='EDIT')
+            dissolve_bones()
+            bpy.ops.object.mode_set(mode='POSE')
+        
     @staticmethod
     def cleanup_vertex_groups(bones:list, objects:list):
         for obj in objects:
@@ -303,9 +355,9 @@ class EditFuncs:
         valid_bones = {}
         for bone in bones:
             # If the bone.parent has a valid parent, add the bone to the parent's list of children
-            in_values = find_key(valid_bones, bone.parent)
-            if in_values:
-                valid_bones.setdefault(in_values, []).append(bone)
+            valid_parent = find_key(valid_bones, bone.parent)
+            if valid_parent:
+                valid_bones.setdefault(valid_parent, []).append(bone)
                 continue
             
             # Add bone to valid bones
@@ -488,11 +540,62 @@ def editbones_selected_remove() -> None:
         bpy.ops.object.mode_set(mode='EDIT')
     return
 
-# def editbones_selected_dissolve() -> None:
-#     # Same as remove, but dissolve bone
-#     #* Cannot run if bone has more than 1 child
-#     #* Cannot run if parent has more than 1 child
-#     ...
+def editbones_selected_dissolve() -> None:
+    #Note Check if bone.parent - > return if not
+    #Note Cannot run if bone.parent.children > 1 (Can be fixed by setting connected to false to children that are not in selected)
+    #Note
+    #Note Store bone head and connected
+    #Note Delete selected bones
+    #Note For every child of bone, set head to parent head loc, set connected to True
+    
+    #TODO - Doesn't run when no children
+    #TODO - When more than one child
+    #todo   -> If   -> more than one selected in children -> Error
+    #todo   -> else -> "use_connect = False" for unselected children -> set unselected parent to tail of dissolved bone
+    
+    mode = bpy.context.mode
+    if mode == 'EDIT_ARMATURE':
+        bpy.ops.object.mode_set(mode='POSE')
+        
+    init_vars = EditFuncs.init_bones(1)
+    if not init_vars: return
+    armatures, sel_bones, active_bone = init_vars
+    
+    objects = EditFuncs.objects_from_bones(armatures, sel_bones)
+    obj_weights = EditFuncs.weights_from_objects(objects)
+    
+    # Selected bones that have a parent
+    sel_bones = [bone for bone in sel_bones if bone.parent]
+    if not sel_bones: 
+        return popup_window(title="Error", text="No valid bones", icon='ERROR')
+    
+    bones_dict = EditFuncs.organize_bones(sel_bones)
+    for target_bone, children in bones_dict.items():
+        children = [child for child in children if child.use_connect]
+        bones_dict[target_bone] = children
+        if not children: 
+            print("No children")
+            continue
+        
+        # If target bone has more than one child, check if selected children share the same parent
+        if len(target_bone.children) > 1:
+            # Selected children that are direct children of target bone
+            selected_children = [c for c in target_bone.children if c in children]
+            # If selected children share target bone as parent, remove from operation
+            if len(selected_children) > 1:
+                bones_dict[target_bone].clear()
+                print("Invalid action")
+                continue
+        
+        EditFuncs.transfer_weights(obj_weights, target_bone, children)
+        EditFuncs.set_active_bone(target_bone)
+    EditFuncs.cleanup_bones_dissolve(bones_dict)
+    
+    
+    if mode == 'EDIT_ARMATURE':
+        bpy.ops.object.mode_set(mode='EDIT')
+    return
+
 
 # def editbones_chain_resample() -> None:
 #     def resample_coords(coords:list[Vector], res:int) -> list[Vector]:
@@ -831,6 +934,7 @@ class SetPaintMode(bpy.types.Operator):
 
     def execute(self, context):
         obj = bpy.data.objects[self.pattern]
+        assert obj.type == 'MESH', f"Object '{obj.name}' is not a mesh"
         
         # Unhide mesh
         if self.unhide and not obj.visible_get():
@@ -839,22 +943,15 @@ class SetPaintMode(bpy.types.Operator):
             obj.parent.hide_set(False)
             obj.parent.hide_viewport = False    
         
-        # Check if object is in excluded/hidden collection
-        if collection_excluded(obj=obj, unhide=self.unhide): 
-            popup_window(text=f"Mesh '{obj.name}' in hidden collection")
-            return {"CANCELLED"}
-        # Check if object is in excluded/hidden collection
-        if collection_excluded(obj=obj.parent, unhide=self.unhide): 
-            popup_window(text=f"Armature '{obj.parent.name}' in hidden collection")
-            return {"CANCELLED"}
-        # Check if mesh object is hidden
-        if not obj.visible_get(): 
-            popup_window(text=f"Mesh '{obj.name}' is hidden")
-            return {"CANCELLED"}
-        # Check if armature object is hidden
-        if not obj.parent.visible_get(): 
-            popup_window(text=f"Armature '{obj.parent.name}' is hidden")
-            return {"CANCELLED"}
+        # Check if mesh or parent armature is hidden
+        for ob in [obj, obj.parent]:
+            ob_type = {obj: 'Mesh', obj.parent: 'Armature'}[ob]
+            if collection_excluded(obj=ob, unhide=self.unhide): 
+                popup_window(text=f"{ob_type} '{obj.name}' is in a hidden collection")
+                return {"CANCELLED"}
+            if not ob.visible_get(): 
+                popup_window(text=f"{ob_type} '{ob.name}' is hidden")
+                return {"CANCELLED"}
         
         # Set object mode
         if bpy.context.mode != 'OBJECT':
@@ -883,34 +980,13 @@ def unregister():
 
 #STUB ------------------------------------------------- For testing as script
 
-# if __name__ == '__main__':
-#     import timeit
-#     starttime = timeit.default_timer()
-#     def report_print(REPORT_OUT:dict, debug:bool=False) -> None:
-#         """Report if injected into a class, else print"""
-#         self        = locals()['self'] if 'self' in locals() else None
-#         report_out  = self.report if self else print
-        
-#         if REPORT_OUT is None: return
-#         for key, string_list in REPORT_OUT.items():
-#             if key in ("INFO", "WARNING", "ERROR"):
-#                 for string in string_list:
-#                     report_out({key}, string)
-            
-#             elif key == "DEBUG" and debug == True: 
-#                 if REPORT_OUT["DEBUG"]: 
-#                     print("\n ------- Debug: -------")
-#                     for debug in REPORT_OUT["DEBUG"]:
-#                         print(debug)
-#                     print(" ------------------------ \n")
-            
-#             if key not in ("INFO", "WARNING", "ERROR", "DEBUG"):
-#                 print("!! Invalid report key: {key} !!")
-            
-#     # editbones_chain_trim()
-#     editbones_selected_remove()
-#     report_print(REPORT_OUT, False)
-#     print(f"Time: {timeit.default_timer() - starttime}")
+if __name__ == '__main__':
+    import timeit
+    starttime = timeit.default_timer()
+   
+    # editbones_chain_trim()
+    editbones_selected_dissolve()
+    print(f"Time: {timeit.default_timer() - starttime}")
     
-#     print("\n------------------- __main__ -------------------")
+    print("\n------------------- __main__ -------------------")
     
