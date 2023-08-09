@@ -102,7 +102,6 @@ def collection_excluded(obj:bpy.types.Object, unhide:bool=False) -> bool:
         viewl_col[col.name].exclude
         ]) for col in collections]
     
-    print(obj.name, any(visible_collection))
     # If object is in any visible collection, return False
     if any(visible_collection):
         return False
@@ -146,9 +145,13 @@ class EditFuncs:
     
     @staticmethod
     def set_active_bone(bone:object) -> None:
-        """Set active bone in edit mode"""
+        """Set active bone and vertex group"""
         bone.select = True
         bone.id_data.bones.active = bone
+        if bpy.context.mode == 'PAINT_WEIGHT':
+            obj = bpy.context.object
+            vgrps = obj.vertex_groups
+            vgrps.active_index = vgrps[bone.name].index
     
     @staticmethod
     def cleanup_bones(bones:list):
@@ -207,8 +210,6 @@ class EditFuncs:
                 
                 # Set target bone tail location
                 parent.tail = location
-                
-        
         
         if bpy.context.mode == 'PAINT_WEIGHT':
             obj = bpy.context.object
@@ -225,11 +226,13 @@ class EditFuncs:
             bpy.ops.object.mode_set(mode='POSE')
         
     @staticmethod
-    def cleanup_vertex_groups(bones:list, objects:list):
+    def cleanup_vertex_groups(sel_bones:list, objects:list) -> None:
+        """Remove vertex groups"""
         for obj in objects:
-            for bone in bones:
+            for bone in sel_bones:
                 if bone.name not in obj.vertex_groups: continue
-                obj.vertex_groups.remove(obj.vertex_groups[bone.name])
+                vgrp = obj.vertex_groups[bone.name]
+                obj.vertex_groups.remove(vgrp)
     
     @staticmethod
     def objects_from_bones(armatures:list, bones:list) -> list:
@@ -437,10 +440,10 @@ def editbones_selected_to_active() -> None:
     # Cleanup bones and vertex groups
     if active_bone in sel_bones:
         sel_bones.remove(active_bone)
+    EditFuncs.set_active_bone(active_bone)
     EditFuncs.cleanup_bones(sel_bones)
     EditFuncs.cleanup_vertex_groups(sel_bones, objects)
     
-    EditFuncs.set_active_bone(active_bone)
     
     if mode == 'EDIT_ARMATURE': 
         bpy.ops.object.mode_set(mode='EDIT')
@@ -523,18 +526,18 @@ def editbones_selected_remove() -> None:
     if not sel_bones: 
         return popup_window(title="Error", text="No valid bones", icon='ERROR')
     
-    bones = EditFuncs.organize_bones(sel_bones)
-    for target_bone, children in bones.items():
+    bones_dict = EditFuncs.organize_bones(sel_bones)
+    for target_bone, children in bones_dict.items():
         EditFuncs.transfer_weights(obj_weights, target_bone, children)
     
-    # Clean up values
-    cleanup_bones = [item for sublist in bones.values() for item in sublist]
+    # Set active bone
+    activebone = next(iter(bones_dict))
+    EditFuncs.set_active_bone(activebone)
+    
+    # Clean up bones and vertex groups
+    cleanup_bones = [item for sublist in bones_dict.values() for item in sublist]
     EditFuncs.cleanup_bones(cleanup_bones)
     EditFuncs.cleanup_vertex_groups(cleanup_bones, objects)
-    
-    # Select first key
-    bone = [*bones.keys()][0]
-    EditFuncs.set_active_bone(bone)
     
     if mode == 'EDIT_ARMATURE':
         bpy.ops.object.mode_set(mode='EDIT')
@@ -567,7 +570,7 @@ def editbones_selected_dissolve() -> None:
     # Selected bones that have a parent
     sel_bones = [bone for bone in sel_bones if bone.parent]
     if not sel_bones: 
-        return popup_window(title="Error", text="No valid bones", icon='ERROR')
+        return popup_window(title="Error", text="No valid bones selected", icon='ERROR')
     
     bones_dict = EditFuncs.organize_bones(sel_bones)
     for target_bone, children in bones_dict.items():
@@ -588,14 +591,21 @@ def editbones_selected_dissolve() -> None:
                 continue
         
         EditFuncs.transfer_weights(obj_weights, target_bone, children)
-        EditFuncs.set_active_bone(target_bone)
-    EditFuncs.cleanup_bones_dissolve(bones_dict)
     
+    # Set active bone
+    bones_dict = {key:val for key, val in bones_dict.items() if val}
+    if not bones_dict:
+        return popup_window(title="Error", text="No valid bones selected for dissolve operator", icon='ERROR')
+    activebone = next(iter(bones_dict))
+    EditFuncs.set_active_bone(activebone)
+    
+    # Clean up bones and vertex groups
+    EditFuncs.cleanup_bones_dissolve(bones_dict)
+    EditFuncs.cleanup_vertex_groups(sel_bones, objects)
     
     if mode == 'EDIT_ARMATURE':
         bpy.ops.object.mode_set(mode='EDIT')
     return
-
 
 # def editbones_chain_resample() -> None:
 #     def resample_coords(coords:list[Vector], res:int) -> list[Vector]:
