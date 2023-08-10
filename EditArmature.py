@@ -441,8 +441,8 @@ def editbones_selected_to_active() -> None:
     if active_bone in sel_bones:
         sel_bones.remove(active_bone)
     EditFuncs.set_active_bone(active_bone)
-    EditFuncs.cleanup_bones(sel_bones)
     EditFuncs.cleanup_vertex_groups(sel_bones, objects)
+    EditFuncs.cleanup_bones(sel_bones)
     
     
     if mode == 'EDIT_ARMATURE': 
@@ -536,8 +536,8 @@ def editbones_selected_remove() -> None:
     
     # Clean up bones and vertex groups
     cleanup_bones = [item for sublist in bones_dict.values() for item in sublist]
-    EditFuncs.cleanup_bones(cleanup_bones)
     EditFuncs.cleanup_vertex_groups(cleanup_bones, objects)
+    EditFuncs.cleanup_bones(cleanup_bones)
     
     if mode == 'EDIT_ARMATURE':
         bpy.ops.object.mode_set(mode='EDIT')
@@ -600,8 +600,8 @@ def editbones_selected_dissolve() -> None:
     EditFuncs.set_active_bone(activebone)
     
     # Clean up bones and vertex groups
-    EditFuncs.cleanup_bones_dissolve(bones_dict)
     EditFuncs.cleanup_vertex_groups(sel_bones, objects)
+    EditFuncs.cleanup_bones_dissolve(bones_dict)
     
     if mode == 'EDIT_ARMATURE':
         bpy.ops.object.mode_set(mode='EDIT')
