@@ -1,12 +1,11 @@
 import bpy
+import numpy as np
+from mathutils import Vector
+from collections import defaultdict
 
-#TODO -----------------  Weight Paint -----------------
-#TODO - Dissolve bone / delete -> transfer to parent
-#todo     - transfer to parent if there is one, else transfer to child
-#todo     - Check if more than one child
-#todo         1. Transfer to child with longest chain
-#todo         2. Spread weights to all children?
-
+class ddict(defaultdict):
+    __repr__ = dict.__repr__
+    
 #TODO - merge chains (average pos of "loop_bones", all weights of loop_bones to all verts affected by "loop_bones")
 #todo - Resample chain 1.(separate mesh and reapply weights) or 2.(set new weights with math)
 #todo     - order bones by root to tip and check if they are connected (stop if there are gaps)
@@ -20,6 +19,18 @@ import bpy
 #note     chain - run function on entire chain of selected bones (ex: select first bones of chains in the outliner)
 #note     auto - complex operation
 
+
+def pprint_dict(d:ddict | dict, indent=0):
+    """Pretty print a dictionary"""
+    output = '{\n'
+    for k, v in d.items():
+        output += '  ' * (indent + 1)
+        if isinstance(v, ddict | dict):
+            output += f"'{k}': {pprint_dict(v, indent + 1)},\n"
+        else:
+            output += f"'{k}': {repr(v)},\n"
+    output += '  ' * indent + '}'
+    return output
 
 def recursive_dict_print(item:dict) -> None:
     """Print a nested dict in a readable format"""
@@ -84,10 +95,15 @@ def interactive_popup(title:str = "Title", content:dict = {"Title":{"type":"labe
 def collection_excluded(obj:bpy.types.Object, unhide:bool=False) -> bool:
     """
     Unexclude & unhide collection if unhide is True\n
-    Returns False object is in any visible collection, else returns True
+    Returns False if object is in any visible collection, else returns True
     """
-    collections = [col for col in obj.users_collection]
+    collections = [col for col in obj.users_collection if col != bpy.context.scene.collection]
     viewl_col = bpy.context.view_layer.layer_collection.children
+    
+    if obj.visible_get():
+        return False
+    if not collections: # Abort if object is somehow not visible when only in scene collection
+        return True
     
     # Force show collection
     if unhide:
@@ -107,12 +123,14 @@ def collection_excluded(obj:bpy.types.Object, unhide:bool=False) -> bool:
         return False
     else:
         return True
-    
+
+
 #SECTION ------------ Common operations ------------
 class EditFuncs:
     
     @staticmethod
     def init_bones(min_bones:int):
+        """Returns: [armatures, selected bones, active bone]"""
         # Undo steps not stored properly in edit mode
         if bpy.context.mode == 'EDIT_ARMATURE':
             bpy.ops.object.mode_set(mode='POSE')
@@ -134,13 +152,6 @@ class EditFuncs:
         if len(sel_bones) < min_bones: 
             return popup_window(title="Error", text=f"Select {min_bones} bones or more", icon='ERROR')
         
-        # Report.debug(dedent(f"""\
-        #     Armatures: {armatures}
-        #     Bones: {sel_bones}
-        #     Active bone: {active_bone}
-        #     Mode: {bpy.context.mode}
-        #     """
-        #     ).strip("\n"))
         return armatures, sel_bones, active_bone
     
     @staticmethod
@@ -239,14 +250,15 @@ class EditFuncs:
         """Returns a list of objects connected to selected bones"""
         assert len(bones), "No bones"
         objects = set()
+        # Check every object in scene
         for obj in bpy.context.scene.objects:
+            # Skip objects that are not meshes or have no modifiers
             if obj.type != 'MESH': continue
             if not obj.modifiers: continue
+            # If "obj" has an "armature modifier" that is linked to any in "armatures" -> add to "objects"
             for mod in obj.modifiers:
                 if mod.type == 'ARMATURE' and mod.object in armatures:
                     objects.add(obj)
-            # armature_modifiers = {mod for mod in obj.modifiers if mod.type == 'ARMATURE' and mod.object in armatures}
-            # objects += armature_modifiers
         return objects
 
     @staticmethod
@@ -260,12 +272,13 @@ class EditFuncs:
 
             grps_dict = {grp.index: {} for grp in groups}
             for vertex in verts:
-                group_weights = [float]*len(vertex.groups)
-                group_indices = [int]*len(vertex.groups)
+                group_weights = [float]*len(vertex.groups) #grp_weight
+                group_indices = [int]*len(vertex.groups) #vertex_pointer
                 vertex.groups.foreach_get("group", group_indices)
                 vertex.groups.foreach_get("weight", group_weights)
                 
                 for i, grp_index in enumerate(group_indices):
+                    # group_index -> {vertex_pointer: group weight, ...}
                     grps_dict[grp_index].setdefault(vertex, group_weights[i])
                     
             obj_weights.setdefault(obj, grps_dict)
@@ -420,7 +433,7 @@ class EditFuncs:
         influence_count = [len(weights) for verts in newdict.values() for weights in verts.values()]
         percentages = calculate_percentage(influence_count)
         recursive_dict_print(percentages)
-        
+
 
 #SECTION ------------ Functions ------------
 def editbones_selected_to_active() -> None:
@@ -449,60 +462,42 @@ def editbones_selected_to_active() -> None:
         bpy.ops.object.mode_set(mode='EDIT')
     return
     
-# def editbones_selected_to_centre() -> None:
-#     """ Merge selected bones to center \n"""
-#     # Object mode - Use all root bones in armature
-#     # Edit mode - Selected bones -> linked -> root bones
-#     # Transfer to first child bone
+def editbones_create_root_bone() -> None:
+    """
+    Create new bone at the centre of selected bones (pointing up, scale relative to child/parent bones?) \n
+    Store parents of selected bones as "parent_bones" \n
+    Option: Transfer weights from selected bones to root bone, then remove + cleanup groups \n
+    Parent all bones in "parent_bones" to root bone \n
+    """
+    # Object mode - Use all root bones in armature
+    # Edit mode - Selected bones -> linked -> root bones
+    # Transfer to first child bone
+    # Object mode / no bones selected - Use all bones with no parent
     
-#     mode = bpy.context.mode
-#     init_vars = EditFuncs.init_bones(2)
-#     if not init_vars: return
-#     armatures, sel_bones, active_bone = init_vars
+    mode = bpy.context.mode
+    init_vars = EditFuncs.init_bones(2)
+    if not init_vars: return
+    armatures, sel_bones, active_bone = init_vars
     
-#     objects = EditFuncs.objects_from_bones(armatures, sel_bones)
-#     obj_weights = EditFuncs.weights_from_objects(objects)
+    objects = EditFuncs.objects_from_bones(armatures, sel_bones)
+    obj_weights = EditFuncs.weights_from_objects(objects)
     
-#     def set_connected():
-#         assert bpy.context.mode == 'EDIT_ARMATURE', "Must be in edit armature mode"
-#         bones = bpy.context.active_bone.children
-#         for bone in bones:
-#             bone.use_connect = False
+    def average_coords():
+        """ Returns average of list of vectors """
+        head_coords = [bone.head_local for bone in sel_bones]
+        tail_coords = [bone.tail_local for bone in sel_bones]
+        bone_length = np.average([bone.length for bone in sel_bones])
+        head = Vector(np.average(head_coords, 0))
+        tail = head + Vector((0, 0, bone_length))
+        
+        active_bone = bpy.context.active_bone
+        active_bone.head = head
+        active_bone.tail = tail
+        name = active_bone.name.split('.')[0]
+        active_bone.name = active_bone.name + '_root'
     
-#     def average_coords():
-#         """ Returns average of list of vectors """
-#         head_coords = [bone.head_local for bone in sel_bones]
-#         tail_coords = [bone.tail_local for bone in sel_bones]
-#         active_bone = bpy.context.active_bone
-#         active_bone.head = Vector(np.average(head_coords, 0))
-#         active_bone.tail = Vector(np.average(tail_coords, 0))
-#         active_bone.name = active_bone.name + '_root'
-    
-#     if bpy.context.mode == 'PAINT_WEIGHT':
-#         obj = bpy.context.object
-#         bpy.ops.object.mode_set(mode='OBJECT')
-#         bpy.context.view_layer.objects.active = bpy.context.object.parent
-#         bpy.ops.object.mode_set(mode='EDIT')
-#         set_connected()
-#         average_coords()
-#         bpy.ops.object.mode_set(mode='OBJECT')
-#         bpy.context.view_layer.objects.active = obj
-#         bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
-#     else:
-#         assert bpy.context.object.type == 'ARMATURE', "Must be in armature edit mode"
-#         bpy.ops.object.mode_set(mode='EDIT')
-#         set_connected()
-#         average_coords()
-#         bpy.ops.object.mode_set(mode='POSE')
-    
-#     EditFuncs.transfer_weights(obj_weights, active_bone, sel_bones)
-    
-#     # Cleanup bones and vertex groups
-#     EditFuncs.cleanup_bones(sel_bones)
-#     EditFuncs.cleanup_vertex_groups(sel_bones, objects)
-    
-#     if mode == 'EDIT_ARMATURE':
-#         bpy.ops.object.mode_set(mode='EDIT')
+    if mode == 'EDIT_ARMATURE':
+        bpy.ops.object.mode_set(mode='EDIT')
 
 def editbones_selected_remove() -> None:
     """
@@ -816,7 +811,7 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
         if collection_excluded(obj, unhide=unhide):
             return popup_window(text=f"Unable to unhide '{obj.name}'")
         
-        # Unhide parent armature if mesh
+        # Unhide parent armature if object is a mesh
         if obj.type == 'MESH':
             obj.parent.hide_set(False) 
             obj.parent.hide_viewport = False
@@ -927,6 +922,96 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
     return
 
 
+def generate_vertex_weights(power:float=2, threshold:float=0.01) -> None:
+    #TODO - Option: Preserve MeshIsland-VertexGroup Associations
+    
+    #TODO - Options in edit_mesh: (Default = Selected vertices)
+    #TODO   - All vertices | Selected vertices | Linked mesh islands     -> use associated bones
+    #TODO   - Only use the closest bone and it's linked chain
+    
+    #TODO - Options in [edit_bones, pose_bones, weight paint]: (Default = All bones)
+    #TODO   - All bones | Selected bones | Linked bone chains           -> use associated mesh island 
+    
+    def calculate_vertex_weights(bones:list[bpy.types.Bone], vertices:list[bpy.types.MeshVertex], power:float, threshold:float) -> dict[int, dict[str, float]]:
+        """Weight vertices based on distance to bones"""
+        vertex_weights = ddict(lambda: ddict(float))
+        
+        # Distance between vertices and bones
+        for vert in vertices:
+            for bone in bones:
+                distance = (vert.co - (bone.head_local + bone.tail_local)/2).length
+                if distance != 0:
+                    vertex_weights[vert.index][bone.name] = 1 / (distance ** power)
+        
+        # Normalize weights
+        for weights in vertex_weights.values():
+            total_weight = sum(weights.values())
+            for bone_name in weights.keys():
+                weights[bone_name] /= total_weight
+        
+        # Remove weights below the threshold and re-normalize
+        for weights in vertex_weights.values():
+            for bone_name in list(weights.keys()):
+                if weights[bone_name] < threshold:
+                    del weights[bone_name]
+            
+            # Re-normalize after thresholding
+            total_weight = sum(weights.values())
+            if total_weight == 0:  # Set a default weight if total is zero
+                for bone in bones:
+                    weights[bone.name] = 1.0 / len(bones)
+                total_weight = sum(weights.values())
+            
+            for bone_name in weights.keys():
+                weights[bone_name] /= total_weight
+                
+        return vertex_weights
+    
+    selected_bones_only = False
+    selected_verts_only = False
+    
+    mode = bpy.context.mode
+    if mode not in ['EDIT_ARMATURE', 'POSE', 'PAINT_WEIGHT', 'EDIT_MESH']: 
+        return popup_window(text="Invalid mode")
+    
+    obj = bpy.context.object
+    if not obj or obj.type not in ['MESH', 'ARMATURE']: 
+        return popup_window(text="Invalid object type")
+    
+    if obj.type == 'ARMATURE':
+        return popup_window(text="Armature not supported")
+        armatures, sel_bones, active_bone = EditFuncs.init_bones(1)
+    
+    if obj.type == 'MESH':
+        if not obj.parent or obj.parent.type != 'ARMATURE': 
+            return popup_window(text="Mesh has no parent armature")
+        
+        if mode == 'EDIT_MESH':
+            obj.parent.select_set(True)
+            bpy.ops.object.mode_set(mode='WEIGHT_PAINT')
+        
+        if mode == 'PAINT_WEIGHT':
+            _, sel_bones, active_bone = EditFuncs.init_bones(1)
+        
+        bones = obj.parent.data.bones
+        bones = sel_bones if selected_bones_only else bones
+        
+        verts = obj.data.vertices
+        verts = [vert for vert in verts if vert.select] if selected_verts_only else verts
+        
+        weights = calculate_vertex_weights(bones, verts, power, threshold)
+        vgroups = obj.vertex_groups
+
+        obj.vertex_groups.clear()
+        for vert, bone_weights in weights.items():
+            for bone_name, weight in bone_weights.items():
+                if bone_name not in vgroups:
+                    vgroups.new(name=bone_name)
+                vgroups[bone_name].add([vert], weight, 'ADD')
+        
+    EditFuncs.set_active_bone(bpy.context.active_pose_bone.bone)
+    
+    
 #SECTION ------------ Operators ------------
 class SetPaintMode(bpy.types.Operator):
     bl_idname = "sna.set_paint_mode"
