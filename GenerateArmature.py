@@ -8,7 +8,13 @@ from typing import Iterable
 from dataclasses import dataclass
 from io import StringIO 
 import sys
+from collections import defaultdict
 
+class ddict(defaultdict):
+    __repr__ = dict.__repr__
+    
+if __name__ == '__main__':
+    from EditArmature import EditFuncs
 
 def flatten_list(l:list[list]) -> list:
     """Flatten a nested list"""
@@ -21,9 +27,9 @@ def iter_depth(l:list) -> int:
     assert len(l) > 0, "List is empty" 
     return 1 + max(iter_depth(item) for item in l)
 
-def sel_vertex(verts:bmesh.types.BMVertSeq) -> set[bmesh.types.BMVert]:
+def sel_vertex(verts:bmesh.types.BMVertSeq, vert_sel:str = 'Face area') -> set[bmesh.types.BMVert]:
     """In range SELECTION, select vertex with smallest face area / most linked edges"""
-    if mesh_vert_sel == 'Face area':           
+    if vert_sel == 'Face area':           
         face_area = []
         for v in verts:
             area = np.sum([f.calc_area() for f in v.link_faces])
@@ -58,6 +64,16 @@ def reverse_dict_values(d:dict) -> dict:
     """Reverse the values of a dict"""
     return dict(reversed(list(d.items())))
 
+def popup_window(title:str = "Error", text:str|list = "Error message", icon:str = 'ERROR'):
+    """Minimal popup error - less intrusive than assert, easier to read than print"""
+    def popup(self, context):
+        # Each element in text is a line in the popup window
+        lines = text if type(text) == list else text.split("\n") 
+        for line in lines:
+            row = self.layout.row()
+            row.label(text=line)
+    bpy.context.window_manager.popup_menu(popup, title=title, icon=icon) 
+
 class Capturing(list):
     """Capture stdout as a list to capture errors when running multiple operators"""
     #https://stackoverflow.com/a/16571630
@@ -73,8 +89,8 @@ class Capturing(list):
 class Algo:
     
     @classmethod
-    def optimize_coords(cls, coords_list:list[list[Vector]], dist:float=0.3, fac:float=0.0, resample_count:int=5):
-        if debug: print("Optimize coords")
+    def optimize_coords(cls, coords_list:list[list[Vector]], dist:float=0.3, fac:float=0.0, resample:int=5):
+        # if debug: print("Optimize coords")
         #Note       ---- Algorithm ----
         #Note Spline Paramater  ->  [[0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, 4, 5, 6], [0, 1, 2, 3, ...
         #Note Point Index       ->  [[0, 1, 2, 3, 4, 5, 6], [7, 8, 9, 10, 11, 12, 13], [14, 15, ...
@@ -125,7 +141,7 @@ class Algo:
         coords_dict = create_filter(coords_list, dist, fac)
         # Resample the coords_list
         for i, spline_co in enumerate(coords_list):
-            coords_list[i] = cls.resample_coords(spline_co, resample_count)
+            coords_list[i] = cls.resample_coords(spline_co, resample)
         point_index = list_to_indices(coords_list)
         zipped_points = list(zip(*point_index))
         
@@ -146,10 +162,12 @@ class Algo:
         return coords
 
     @staticmethod
-    def resample_coords(coords_list:list[list[Vector]], count:int) -> list[Vector]:
+    def resample_coords(coords_list:list[list[Vector]], resample:int) -> list[Vector]:
         """Resample point coordinates"""
         #TODO Resample length
-        if debug: print("Resample coords")
+        # if debug: print("Resample coords")
+        assert resample > 0, f"Invalid resample: '{resample}' -> Expected > 0"
+        resample += 1
         list_depth = iter_depth(coords_list)
         assert list_depth in [1, 2], f"Invalid depth: '{iter_depth(coords_list)}' -> Expected '1'"
         def run(point_coords):
@@ -162,8 +180,8 @@ class Algo:
             cum_sum = length_list.cumsum()
             cum_sum = np.insert(cum_sum,0,0)
             new_coords = []
-            for i in range(count):
-                target = length*(i / (count - 1))
+            for i in range(resample):
+                target = length*(i / (resample - 1))
                 i1 = len(cum_sum[cum_sum <= target]) - 1
                 if i1 >= len(length_list):
                     factor = 1
@@ -180,9 +198,9 @@ class Algo:
             return run(coords_list)
     
     @staticmethod
-    def gen_coords(obj:bpy.types.Object, verts:bmesh.types.BMVertSeq, max_sel:int) -> list[list[Vector], set[int]]:
+    def gen_coords(obj:bpy.types.Object, verts:bmesh.types.BMVertSeq, modulo:int, max_len:int) -> list[list[Vector], set[int]]:
         """Create a list of coords from the center of verts to the center of each loop from verts"""
-        if debug: print("Gen coords")
+        # if debug: print("Gen coords")
         def center(self):   # Local avarage location of selection ignoring object offset
             coords = [obj.matrix_world @ v.co for v in self]
             return Vector(np.average(coords, 0))
@@ -196,7 +214,7 @@ class Algo:
         first = verts
         second = set()
         
-        for i in range(max_sel):
+        for i in range(max_len):
             if second: first = second
             
             second = linked_verts(first)
@@ -204,14 +222,14 @@ class Algo:
             if first == second: break 
             
             loop = second.difference(first)                     # Verts in second that are not in first
-            skip = (i + 1) % (mod + 1)                          # Skip loops  
+            skip = (i + 1) % (modulo + 1)                          # Skip loops  
             if not skip: coords.append(center(loop))            # Add coords to list if not skipped
         return coords, island_indices
     
     @staticmethod
     def mesh_islands(bm:bmesh.types.BMesh, mode:str, max_isl:int, max_isl_verts:int) -> list[list]:
         """List of verts for every island"""
-        if debug: print("Mesh islands")
+        # if debug: print("Mesh islands")
         bm.verts.ensure_lookup_table()   
         copy_verts = {v for v in bm.verts if v.select} if mode == 'EDIT' else {*bm.verts}
         # if len(copy_verts) < max_isl: max_isl = len(copy_verts)
@@ -236,29 +254,79 @@ class Algo:
             islands.append(verts_ind)
         return islands
     
+    @staticmethod
+    def calculate_vertex_weights(bones:list[bpy.types.Bone], vertices:list[bpy.types.MeshVertex], power:float, threshold:float) -> dict[int, dict[str, float]]:
+        """Weight vertices based on distance to bones"""
+        vertex_weights = ddict(lambda: ddict(float))
+        
+        # Distance between vertices and bones
+        for vert in vertices:
+            for bone in bones:
+                distance = (vert.co - (bone.head_local + bone.tail_local)/2).length
+                if distance != 0:
+                    vertex_weights[vert.index][bone.name] = 1 / (distance ** power)
+        
+        # Normalize weights
+        for weights in vertex_weights.values():
+            total_weight = sum(weights.values())
+            for bone_name in weights.keys():
+                weights[bone_name] /= total_weight
+        
+        # Remove weights below the threshold and re-normalize
+        for weights in vertex_weights.values():
+            for bone_name in list(weights.keys()):
+                if weights[bone_name] < threshold:
+                    del weights[bone_name]
+            
+            # Re-normalize after thresholding
+            total_weight = sum(weights.values())
+            if total_weight == 0:  # Set a default weight if total is zero
+                for bone in bones:
+                    weights[bone.name] = 1.0 / len(bones)
+                total_weight = sum(weights.values())
+            
+            for bone_name in weights.keys():
+                weights[bone_name] /= total_weight
+                
+        return vertex_weights
+    
 class GenerateCoords:
     reverse_bone_chain:bool
     
     @staticmethod
+    def init_generate(armature_name:str, bone_name:str):
+        obj = bpy.context.object
+        mode = bpy.context.object.mode
+        if not obj:
+            return popup_window(text="No active object")
+        if not obj.visible_get():
+            return popup_window(text="Object is hidden")
+        if mode == 'EDIT_MESH':
+            if not bpy.context.object.data.total_vert_sel:
+                return popup_window(text="No vertices selected")
+        arm = ArmatureFuncs.create(obj, armature_name, bone_name)
+        return obj, mode, arm
+    
+    @staticmethod
     def initiate_bmesh(obj:bpy.types.Object, mode:str, merge_dist:float = 0.0001) -> bmesh.types.BMesh:
-        if debug: print(f"Initiating bmesh from {obj.name}")
+        # if debug: print(f"Initiating bmesh from {obj.name}")
         bpy.ops.object.mode_set(mode='OBJECT')
         bm = bmesh.new()
         bm.from_mesh(obj.data)
         return bm
     
     @classmethod
-    def from_mesh(cls, obj:bpy.types.Object, mode:str, resample:int = 0, max_sel:int = 100) -> list[Vector]:
-        if debug: print(f"Generating coords from {obj.name}")
+    def from_mesh(cls, obj:bpy.types.Object, mode:str, resample:int, modulo:int, max_len:int, vert_sel:str) -> list[Vector]:
+        # if debug: print(f"Generating coords from {obj.name}")
         bm = cls.initiate_bmesh(obj, mode)
         verts = [v for v in bm.verts]
         selected = {v for v in verts if v.select}
         assert verts, "No vertices"
         if mode == 'OBJECT': 
-            selected = sel_vertex(verts)
+            selected = sel_vertex(verts, vert_sel)
         if not selected: return
 
-        coords, island_indices = Algo.gen_coords(obj, selected, max_sel)
+        coords, island_indices = Algo.gen_coords(obj, selected, modulo, max_len)
         if resample: coords = Algo.resample_coords(coords, resample)
         coords.reverse()
         grp_islands = {
@@ -269,16 +337,16 @@ class GenerateCoords:
         return grp_islands
     
     @classmethod
-    def from_islands(cls, obj:bpy.types.Object, mode:str, max_isl:int, max_loops:int, resample:int = 0) -> list[list[Vector]]:
-        if debug: print(f"Generating coords from {obj.name}")
+    def from_islands(cls, obj:bpy.types.Object, mode:str, resample:int, modulo:int, max_len:int, max_isl:int, vert_sel:str) -> list[list[Vector]]:
+        # if debug: print(f"Generating coords from {obj.name}")
         if mode == 'EDIT': bpy.ops.mesh.select_linked()
         bm = cls.initiate_bmesh(obj, mode)
-        islands_verts = Algo.mesh_islands(bm, mode, max_isl, max_loops)
+        islands_verts = Algo.mesh_islands(bm, mode, max_isl, max_len)
         grp_islands = {}
         for i, verts in enumerate(islands_verts):
             if not verts: continue
-            selected = sel_vertex(verts)
-            coords, island_indices = Algo.gen_coords(obj, selected, max_loops)
+            selected = sel_vertex(verts, vert_sel)
+            coords, island_indices = Algo.gen_coords(obj, selected, modulo, max_len)
             if resample: coords = Algo.resample_coords(coords, resample)
             coords.reverse()
             
@@ -293,7 +361,7 @@ class GenerateCoords:
     
     @staticmethod
     def from_curves(obj:bpy.types.Object, resample:int) -> list[list[Vector]]:
-        if debug: print(f"Generating coords from {obj.name}")
+        # if debug: print(f"Generating coords from {obj.name}")
         # Runs if the obj type is a Hair curve
         matr = obj.matrix_world
         if hasattr(obj.data, 'curves'):
@@ -382,7 +450,7 @@ class ArmatureFuncs:
     @classmethod
     def create(cls, obj:bpy.types.Object, armature_name:str, bone_name:str, armature:bpy.types.Armature = None):
         """Creates a new armature or uses the existing one with the same name"""
-        if debug: print("Create armature")
+        # if debug: print("Create armature")
         if not armature_name:   armature_name = obj.name+'_rig'
         if not bone_name:       bone_name = 'bone'
         if armature:            
@@ -444,7 +512,7 @@ class ArmatureFuncs:
     
     def get_coords(self, mode:str) -> list[list]:
         """Return the armatures bone coordinates"""
-        if debug: print("Armature get coords")
+        # if debug: print("Armature get coords")
         assert self.armature.type == "ARMATURE", "Object is not an armature"
 
         if mode == 'POSE':
@@ -467,7 +535,7 @@ class ArmatureFuncs:
     
     def generate_bones(self, isl:dict, reverse:bool = False) -> None:
         """Generate the armatures bones"""
-        if debug: print("Armature generate bones")
+        # if debug: print("Armature generate bones")
         
         # Set armature as active object and check if it is editable
         bpy.context.view_layer.objects.active = self.armature
@@ -478,12 +546,12 @@ class ArmatureFuncs:
         self.armature.select_set(True)
         if self.armature.parent: 
             bpy.ops.object.parent_clear(type='CLEAR_KEEP_TRANSFORM')
-            report({'INFO'}, "Armature parent cleared")
+            # report({'INFO'}, "Armature parent cleared")
             
         # Apply armature transforms if it has any & report it
         if self.armature.matrix_world != Matrix.Identity(4):
             bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
-            report({'INFO'}, "Armature transforms applied")
+            # report({'INFO'}, "Armature transforms applied")
         
         bpy.ops.object.mode_set(mode='EDIT')
         for i, value in enumerate(isl.values()):
@@ -508,7 +576,7 @@ class ArmatureFuncs:
     
     def clear_bones(self, edit_bones = None) -> None:
         """Clears all bones from the armature"""
-        if debug: print("Armature clear bones")
+        # if debug: print("Armature clear bones")
         
         if not edit_bones: edit_bones = self.armature.data.edit_bones
         bpy.context.view_layer.objects.active = self.armature
@@ -519,12 +587,12 @@ class ArmatureFuncs:
         bpy.ops.object.mode_set(mode='OBJECT')
 
     @staticmethod
-    def auto_weight(islands_grp:dict, arm_obj:object, mesh_obj:object):
+    def auto_weight(islands_grp:dict, arm_obj:object, mesh_obj:object, mix_mode:str = 'REPLACE') -> None:
         """
         islands_grp:      {f"Island_{i}":{"bones":{j:{"co":Vector((0,0,0)),"name":"bonename"}, ...},"indices":[]}, ...}\n
         temp_meshes:      {f"{i}":object, ...}\n
         temp_armatures:   {f"{i}":object, ...}"""
-        if debug: print("Armatures auto weight")
+        # if debug: print("Armatures auto weight")
         def set_active_selected(obj:object) -> None:
             bpy.context.view_layer.objects.active = obj
             for ob in bpy.data.objects: ob.select_set(ob == obj)
@@ -601,7 +669,7 @@ class ArmatureFuncs:
             meshes = temp_meshes()
             armatures = temp_armatures()
             
-            report({'INFO'}, "Applying auto weights")
+            # report({'INFO'}, "Applying auto weights")
             with Capturing() as output:                         # Capture error outputs from console
                 for i, armature in enumerate(armatures.values()):
                     bpy.context.view_layer.objects.active = armature
@@ -627,8 +695,8 @@ class ArmatureFuncs:
                 set_active_selected(mesh_obj)
                 for mesh in meshes.values(): mesh.select_set(True)
                 bpy.ops.object.join()
-            if not output: 
-                report({'INFO'}, "Auto weights applied")
+            # if not output: 
+                # report({'INFO'}, "Auto weights applied")
             return output
        
         islands_data = sort_islands(islands_grp)
@@ -636,78 +704,387 @@ class ArmatureFuncs:
         
         # Output errors
         if out: 
-            [report({'ERROR'}, str(item)) for item in out]
+            popup_window([str(item) for item in out])
             print("Error output:", out)
         set_active_selected(arm_obj)
-        
-        # recursive_dict_print(islands_grp)
-        # recursive_dict_print(islands_data)
 
+    @staticmethod
+    def set_armature_name(adv_settings:bool, armature_name:str):
+        def auto_name(obj):
+            if obj.parent and obj.parent.type == 'ARMATURE':
+                return obj.parent.name
+            else:
+                return bpy.context.object.name + '_rig'
+        
+        def auto_name_advanced(gen_type, existing):
+            x = {
+                'Auto': auto_name,
+                'Custom': armature_name,
+                'Existing': existing.name
+            }
+            return x[gen_type]
+        
+        obj = bpy.context.object
+        
+        armature_name = auto_name_advanced() if adv_settings else auto_name(obj)
+        
+        objects = bpy.data.objects
+        if objects[armature_name].visible_get() == False if armature_name in objects else False:
+            popup_window(f"Armature '{armature_name}' is hidden")
+            return None
+        else:
+            return armature_name
 
 #----------------------------------------------------------------
 
-#NOTE Variables set from outside script
-_locals = locals()
-def is_local(var_name:str, default_var):
-    return _locals[var_name] if var_name in _locals else default_var
+# check_vars = lambda *args: any(not lst for lst in [*args])
 
-mod                  = is_local('mod', 0)
-max_isl              = is_local('max_isl', 500)
-max_loops            = is_local('max_loops', 100)
-reverse_bone_chain   = is_local('reverse_bone_chain', False)
-armature_name        = is_local('armature_name', '')
-bone_name            = is_local('bone_name', 'bone')
-mesh_vert_sel        = is_local('mesh_vert_sel', 'Face area')
-resample_count       = is_local('resample_count', 8)
-execute_type         = is_local('execute_type', 'ISLANDS')
-auto_weights         = is_local('auto_weights', True)
-mix_mode             = is_local('mix_mode', 'REPLACE')
-dist                 = is_local('dist', 0.12)
-fac                  = is_local('fac', 0.0)
-self                 = is_local('self', None)
-debug                = is_local('debug', False)
-report = self.report if self else print
+def get_armature_name():
+    def armature_name_auto():
+        if valid_armatures:
+            return valid_armatures[0].name
+        else:
+            return bpy.context.object.name + '_rig'
+        
+    def armature_name_custom():
+        if 'sna_armature_name' in bpy.context.scene and bpy.context.scene.sna_armature_name:
+            return bpy.context.scene.sna_armature_name
+        else:
+            return armature_name_auto()
+    
+    def armature_name_existing():
+        if 'sna_existing_armature' in bpy.context.scene and bpy.context.scene.sna_existing_armature:
+            return bpy.context.scene.sna_existing_armature.name
+        else:
+            return armature_name_auto()
+    
+    valid_armatures = EditFuncs.connected_armatures()
+    arm_name_type = bpy.context.scene.sna_armature_gen_type if 'sna_armature_gen_type' in bpy.context.scene else 'Auto'
+    get_name_type = {
+        'Auto': armature_name_auto,
+        'Custom': armature_name_custom,
+        'Existing': armature_name_existing
+    }
+    get_name_type[arm_name_type]
+    armature_name = get_name_type[arm_name_type]()
+    return armature_name
 
-def main():
-    print("------------- CTools Armature generator -------------\n")
-    obj = bpy.context.active_object
-    obj_mode = bpy.context.object.mode
-    assert obj, "No active object"
-    assert obj.visible_get(), "Object is hidden"
+class CT_GenerateBonesMesh(bpy.types.Operator):
+    bl_idname = "ct.generate_bones_mesh"
+    bl_label = "Generate Bones"
+    bl_description = "Generate bones from mesh selection"
+    bl_options = {"REGISTER", "UNDO"}
     
-    if obj.type == 'MESH' and obj_mode == 'EDIT':
-        assert obj.data.total_vert_sel, "No vertices selected"
+    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False)
+    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0)
+    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False)
     
-    # Using "if, elif" instead of "case" statements for downgradability
-    if execute_type in ['CURVE', 'CURVES']:
-        assert 'CURVE' in obj.type, "Object is not a curve"
-        arm = ArmatureFuncs.create(obj, armature_name, bone_name)
-        islands_dict = GenerateCoords.from_curves(obj, resample_count)
-        arm.generate_bones(islands_dict, reverse_bone_chain)
+    apply_weights: bpy.props.BoolProperty(name='apply_weights', description='', default=False)
+    modulo: bpy.props.IntProperty(name='modulo', description='Skip Bones', default=0, subtype='NONE', min=0)
+    max_loops: bpy.props.IntProperty(name='max_loops', description='Max bones per island. (Increase when needed)', default=100, subtype='NONE', min=1, max=1000)
+    vert_sel: bpy.props.EnumProperty(name='vert_sel', description='', items=[('Face area', 'Face area', '', 0, 0), ('Linked edges', 'Linked edges', '', 0, 1)])
+
+    mix_mode: bpy.props.EnumProperty(name='mix_mode', description='', items=[('REPLACE', 'REPLACE', '', 0, 0), ('ADD', 'ADD', '', 0, 1)])
+    advanced_settings: bpy.props.BoolProperty(name='advanced_settings', description='', default=False)
+    
+    @classmethod
+    def poll(cls, context):
+        if bpy.app.version < (3, 3, 0):
+            cls.poll_message_set(f'Unsupported in Blender {bpy.app.version_string}')
+            return False
+        return True
+
+    def execute(self, context):
+        armature_name = get_armature_name()
+        bone_name = bpy.context.scene.sna_bone_name if 'sna_bone_name' in bpy.context.scene else 'bone'
+        self.resample = self.resample if self.resample_on else 0
         
-    elif execute_type == 'MESH':
-        assert obj.type == 'MESH', "Object is not a mesh"
-        arm = ArmatureFuncs.create(obj, armature_name, bone_name)
-        islands_dict = GenerateCoords.from_mesh(obj, obj_mode, resample_count, max_loops)
-        arm.generate_bones(islands_dict, reverse_bone_chain)
-        if auto_weights: ArmatureFuncs.auto_weight(islands_dict, arm.armature, obj)
+        obj, obj_mode, arm = GenerateCoords.init_generate(armature_name, bone_name)
+        islands_dict = GenerateCoords.from_mesh(obj, obj_mode, self.resample, self.modulo, self.max_loops, self.vert_sel)
+        arm.generate_bones(islands_dict, self.reverse)
+        if self.apply_weights: 
+            ArmatureFuncs.auto_weight(islands_dict, arm.armature, obj, self.mix_mode)
+       
+        return {"FINISHED"}
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(heading='', align=True)
+        col.scale_x = 1.20
+        col.scale_y = 1.20
+        row_reverse = col.row(heading='', align=True)
+        row_reverse.prop(self, 'reverse', text='', icon_value=(36 if self.reverse else 38), emboss=True)
+        box_rev = row_reverse.box()
+        box_rev.scale_x = 1.0
+        box_rev.scale_y = 0.63
+        box_rev.label(text='Reverse', icon_value=715)
+        row_resample = col.row(heading='', align=True)
+        row_resample.prop(self, 'resample_on', text='', icon_value=(39 if self.resample_on else 38), emboss=True)
+        box_3C89A = row_resample.box()
+        box_3C89A.scale_x = 1.0
+        box_3C89A.scale_y = 0.63
+        box_3C89A.label(text='Resample', icon_value=16)
+        row_8E3B7 = row_resample.row(heading='', align=True)
+        row_8E3B7.enabled = self.resample_on
+        row_8E3B7.prop(self, 'resample', text='', icon_value=0, emboss=True)
+
+        # Mesh
+        col_8DE44 = col.column(heading='', align=True)
+        row_66FE3 = col_8DE44.row(heading='', align=True)
+        row_66FE3.prop(self, 'apply_weights', text='', icon_value=(36 if self.apply_weights else 38), emboss=True)
+        row_C7688 = row_66FE3.row(heading='', align=True)
+        box_79147 = row_C7688.box()
+        box_79147.scale_x = 1.0
+        box_79147.scale_y = 0.63
+        box_79147.label(text='Apply weights', icon_value=475)
+        row_C7688.prop(self, 'mix_mode', text='', icon_value=0, emboss=True)
         
-    elif execute_type == 'ISLANDS':
-        assert obj.type == 'MESH', "Object is not a mesh"
-        arm = ArmatureFuncs.create(obj, armature_name, bone_name)
-        islands_dict = GenerateCoords.from_islands(obj, obj_mode, max_isl, max_loops, resample_count)
-        arm.generate_bones(islands_dict, reverse_bone_chain)
-        if auto_weights: ArmatureFuncs.auto_weight(islands_dict, arm.armature, obj)
+        if 'ctools_armature' in bpy.context.preferences.addons:
+            advanced_settings = bpy.context.preferences.addons['ctools_armature'].preferences.sna_advanced_settings
+        elif bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings:
+            advanced_settings = bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings
+        else:
+            advanced_settings = False
         
-    elif execute_type == 'ARMATURE':
-        assert obj.type == 'ARMATURE', "Object is not an armature"
-        assert resample_count, "Resample count must be greater than 0"
-        arm = ArmatureFuncs.create(obj, armature_name, bone_name, obj)
+        if advanced_settings:
+            col_E2B81 = col_8DE44.column(heading='', align=True)
+            col_E2B81.alignment = 'Expand'.upper()
+            col_E2B81.separator(factor=1.0)
+            
+            # Islands
+            if False:
+                row_27CC4 = col_E2B81.row(heading='', align=True)
+                box_9F073 = row_27CC4.box()
+                box_9F073.scale_x = 1.0
+                box_9F073.scale_y = 0.63
+                box_9F073.label(text='Start vertex algorithm', icon_value=0)
+                row_27CC4.prop(self, 'sna_mesh_vert_sel', text='', icon_value=0, emboss=True)
+                
+            row_A61CC = col_E2B81.row(heading='', align=True)
+            row_A61CC.scale_x = 1.0
+            row_A61CC.scale_y = 1.0
+            box_36178 = row_A61CC.box()
+            box_36178.scale_x = 1.0
+            box_36178.scale_y = 0.63
+            box_36178.label(text='Modulo', icon_value=0)
+            row_A61CC.prop(self, 'modulo', text='', icon_value=0, emboss=True)
+            row_F4484 = col_E2B81.row(heading='', align=True)
+            box_C0076 = row_F4484.box()
+            box_C0076.scale_x = 1.0
+            box_C0076.scale_y = 0.63
+            box_C0076.label(text='Max length', icon_value=0)
+            row_F4484.prop(self, 'max_loops', text='', icon_value=0, emboss=True)
+
+    def invoke(self, context, event):
+        obj = bpy.context.object
+        if not obj:
+            self.report({'ERROR'}, message='No active object')
+            return {"CANCELLED"}
+        if not obj.visible_get():
+            self.report({'ERROR'}, message='Object is hidden')
+            return {"CANCELLED"}
         
-        coords = arm.get_coords(obj_mode)
-        coords = Algo.optimize_coords(coords, dist, fac, resample_count)
+        if obj.type == 'MESH' and bpy.context.mode == 'EDIT_MESH':
+            if not obj.data.total_vert_sel:
+                self.report({'ERROR'}, message='No vertices selected')
+                return {"CANCELLED"}
+        context.window_manager.invoke_props_popup(self, event)
+        return self.execute(context)
+    
+class CT_GenerateBonesCurves(bpy.types.Operator):
+    bl_idname = "ct.generate_bones_curves"
+    bl_label = "Generate Bones"
+    bl_description = "Generate bones from curves"
+    bl_options = {"REGISTER", "UNDO"}
+    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False)
+    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0)
+    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False)
+
+    @classmethod
+    def poll(cls, context):
+        if bpy.app.version < (3, 3, 0):
+            cls.poll_message_set(f'Unsupported in Blender {bpy.app.version_string}')
+            return False
+        return True
+
+    def execute(self, context):
+        armature_name = get_armature_name()
+        bone_name = bpy.context.scene.sna_bone_name if 'sna_bone_name' in bpy.context.scene else 'bone'
+        self.resample = self.resample if self.resample_on else 0
         
-        arm.clear_bones()
-        arm.generate_bones(islands_dict, reverse_bone_chain)
-    print("\n--------------------------")
-main()
+        obj, _, arm = GenerateCoords.init_generate(armature_name, bone_name)
+        islands_dict = GenerateCoords.from_curves(obj, self.resample)
+        arm.generate_bones(islands_dict, self.reverse)
+        
+        return {"FINISHED"}
+
+    def draw(self, context):
+        layout = self.layout
+        col_2D2FB = layout.column(align=True)
+        col_2D2FB.scale_x = 1.20
+        col_2D2FB.scale_y = 1.20
+        
+        row_D6B39 = col_2D2FB.row(align=True)
+        row_D6B39.prop(self, 'reverse', text='', icon_value=36 if self.reverse else 38)
+        box_FE569 = row_D6B39.box()
+        box_FE569.scale_x = 1.0
+        box_FE569.scale_y = 0.63
+        box_FE569.label(text='Reverse', icon_value=715)
+        
+        row_20AB8 = col_2D2FB.row(align=True)
+        row_20AB8.prop(self, 'resample_on', text='', icon_value=39 if self.resample_on else 38)
+        box_9D78D = row_20AB8.box()
+        box_9D78D.scale_x = 1.0
+        box_9D78D.scale_y = 0.63
+        box_9D78D.label(text='Resample', icon_value=16)
+        row_16A4B = row_20AB8.row(align=True)
+        row_16A4B.enabled = self.resample_on
+        row_16A4B.prop(self, 'resample', text='')
+
+    def invoke(self, context, event):
+        obj = bpy.context.object
+        if not obj:
+            self.report({'ERROR'}, message='No active object')
+            return {"CANCELLED"}
+        if not obj.visible_get():
+            self.report({'ERROR'}, message='Object is hidden')
+            return {"CANCELLED"}
+        if obj.type not in ['CURVE', 'CURVES']:
+            self.report({'ERROR'}, message=f"Expected object type to be 'CURVE' or 'CURVES', not '{obj.type}'")
+        if bpy.context.mode not in ['OBJECT', 'EDIT_CURVE', 'EDIT_CURVES', 'SCULPT_CURVES']:
+            self.report({'ERROR'}, message=f"Expected object mode to be in: ['OBJECT', 'EDIT_CURVE', 'EDIT_CURVES', 'SCULPT_CURVES'] not '{bpy.context.mode}'")
+        context.window_manager.invoke_props_popup(self, event)
+        return self.execute(context)
+
+class CT_GenerateBonesIslands(bpy.types.Operator):
+    bl_idname = "ct.generate_bones_islands"
+    bl_label = "Generate Bones"
+    bl_description = "Generate bones from mesh islands"
+    bl_options = {"REGISTER", "UNDO"}
+    
+    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False)
+    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0)
+    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False)
+    
+    apply_weights: bpy.props.BoolProperty(name='apply_weights', description='', default=False)
+    modulo: bpy.props.IntProperty(name='modulo', description='Skip Bones', default=0, subtype='NONE', min=0)
+    max_loops: bpy.props.IntProperty(name='max_loops', description='Max bones per island. (Increase when needed)', default=100, subtype='NONE', min=1, max=1000)
+    vert_sel: bpy.props.EnumProperty(name='vert_sel', description='', items=[('Face area', 'Face area', '', 0, 0), ('Linked edges', 'Linked edges', '', 0, 1)])
+
+    mix_mode: bpy.props.EnumProperty(name='mix_mode', description='', items=[('REPLACE', 'REPLACE', '', 0, 0), ('ADD', 'ADD', '', 0, 1)])
+    advanced_settings: bpy.props.BoolProperty(name='advanced_settings', description='', default=False)
+    
+    @classmethod
+    def poll(cls, context):
+        if bpy.app.version < (3, 3, 0):
+            cls.poll_message_set(f'Unsupported in Blender {bpy.app.version_string}')
+            return False
+        return True
+
+    def execute(self, context):
+        armature_name = get_armature_name()
+        bone_name = bpy.context.scene.sna_bone_name if 'sna_bone_name' in bpy.context.scene else 'bone'
+        self.resample = self.resample if self.resample_on else 0
+        
+        obj, obj_mode, arm = GenerateCoords.init_generate(armature_name, bone_name)
+        islands_dict = GenerateCoords.from_islands(obj, obj_mode, self.resample, self.modulo, self.max_loops, max_isl=500, vert_sel=self.vert_sel)
+        arm.generate_bones(islands_dict, self.reverse)
+        if self.apply_weights: 
+            ArmatureFuncs.auto_weight(islands_dict, arm.armature, obj, self.mix_mode)
+        return {"FINISHED"}
+
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(heading='', align=True)
+        col.scale_x = 1.20
+        col.scale_y = 1.20
+        row_reverse = col.row(heading='', align=True)
+        row_reverse.prop(self, 'reverse', text='', icon_value=(36 if self.reverse else 38), emboss=True)
+        box_rev = row_reverse.box()
+        box_rev.scale_x = 1.0
+        box_rev.scale_y = 0.63
+        box_rev.label(text='Reverse', icon_value=715)
+        row_resample = col.row(heading='', align=True)
+        row_resample.prop(self, 'resample_on', text='', icon_value=(39 if self.resample_on else 38), emboss=True)
+        box_3C89A = row_resample.box()
+        box_3C89A.scale_x = 1.0
+        box_3C89A.scale_y = 0.63
+        box_3C89A.label(text='Resample', icon_value=16)
+        row_8E3B7 = row_resample.row(heading='', align=True)
+        row_8E3B7.enabled = self.resample_on
+        row_8E3B7.prop(self, 'resample', text='', icon_value=0, emboss=True)
+
+        # Mesh
+        col_8DE44 = col.column(heading='', align=True)
+        row_66FE3 = col_8DE44.row(heading='', align=True)
+        row_66FE3.prop(self, 'apply_weights', text='', icon_value=(36 if self.apply_weights else 38), emboss=True)
+        row_C7688 = row_66FE3.row(heading='', align=True)
+        box_79147 = row_C7688.box()
+        box_79147.scale_x = 1.0
+        box_79147.scale_y = 0.63
+        box_79147.label(text='Apply weights', icon_value=475)
+        row_C7688.prop(self, 'mix_mode', text='', icon_value=0, emboss=True)
+        
+        if 'ctools_armature' in bpy.context.preferences.addons:
+            advanced_settings = bpy.context.preferences.addons['ctools_armature'].preferences.sna_advanced_settings
+        elif bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings:
+            advanced_settings = bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings
+        else:
+            advanced_settings = False
+        
+        if advanced_settings:
+            col_E2B81 = col_8DE44.column(heading='', align=True)
+            col_E2B81.alignment = 'Expand'.upper()
+            col_E2B81.separator(factor=1.0)
+            
+            # Islands
+            if True:
+                row_27CC4 = col_E2B81.row(heading='', align=True)
+                box_9F073 = row_27CC4.box()
+                box_9F073.scale_x = 1.0
+                box_9F073.scale_y = 0.63
+                box_9F073.label(text='Start vertex algorithm', icon_value=0)
+                row_27CC4.prop(self, 'vert_sel', text='', icon_value=0, emboss=True)
+                
+            row_A61CC = col_E2B81.row(heading='', align=True)
+            row_A61CC.scale_x = 1.0
+            row_A61CC.scale_y = 1.0
+            box_36178 = row_A61CC.box()
+            box_36178.scale_x = 1.0
+            box_36178.scale_y = 0.63
+            box_36178.label(text='Modulo', icon_value=0)
+            row_A61CC.prop(self, 'modulo', text='', icon_value=0, emboss=True)
+            row_F4484 = col_E2B81.row(heading='', align=True)
+            box_C0076 = row_F4484.box()
+            box_C0076.scale_x = 1.0
+            box_C0076.scale_y = 0.63
+            box_C0076.label(text='Max length', icon_value=0)
+            row_F4484.prop(self, 'max_loops', text='', icon_value=0, emboss=True)
+
+    def invoke(self, context, event):
+        obj = bpy.context.object
+        if not obj:
+            self.report({'ERROR'}, message='No active object')
+            return {"CANCELLED"}
+        if not obj.visible_get():
+            self.report({'ERROR'}, message='Object is hidden')
+            return {"CANCELLED"}
+        
+        if obj.type == 'MESH' and bpy.context.mode == 'EDIT_MESH':
+            if not obj.data.total_vert_sel:
+                self.report({'ERROR'}, message='No vertices selected')
+                return {"CANCELLED"}
+        context.window_manager.invoke_props_popup(self, event)
+        return self.execute(context)
+
+
+def register():
+    bpy.utils.register_class(CT_GenerateBonesCurves)
+    bpy.utils.register_class(CT_GenerateBonesMesh)
+    bpy.utils.register_class(CT_GenerateBonesIslands)
+
+def unregister():
+    bpy.utils.unregister_class(CT_GenerateBonesCurves)
+    bpy.utils.unregister_class(CT_GenerateBonesMesh)
+    bpy.utils.unregister_class(CT_GenerateBonesIslands)
+
