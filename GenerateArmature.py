@@ -14,7 +14,7 @@ class ddict(defaultdict):
     __repr__ = dict.__repr__
     
 if __name__ == '__main__':
-    from EditArmature import EditFuncs
+    from EditArmature import EditFuncs, WithTimer
 
 def flatten_list(l:list[list]) -> list:
     """Flatten a nested list"""
@@ -257,15 +257,17 @@ class Algo:
     @staticmethod
     def calculate_vertex_weights(bones:list[bpy.types.Bone], vertices:list[bpy.types.MeshVertex], power:float, threshold:float) -> dict[int, dict[str, float]]:
         """Weight vertices based on distance to bones"""
+        # Creates an empty dict with the format {vertex_index: {bone_name: weight, ...}, ...}
         vertex_weights = ddict(lambda: ddict(float))
         
         # Distance between vertices and bones
+        bone_centers = [(bone.head_local + bone.tail_local)/2 for bone in bones]
         for vert in vertices:
-            for bone in bones:
-                distance = (vert.co - (bone.head_local + bone.tail_local)/2).length
+            for i, bone in enumerate(bones):
+                distance = (vert.co - bone_centers[i]).length
                 if distance != 0:
                     vertex_weights[vert.index][bone.name] = 1 / (distance ** power)
-        
+            
         # Normalize weights
         for weights in vertex_weights.values():
             total_weight = sum(weights.values())
@@ -289,7 +291,7 @@ class Algo:
                 weights[bone_name] /= total_weight
                 
         return vertex_weights
-    
+        
 class GenerateCoords:
     reverse_bone_chain:bool
     
@@ -736,8 +738,6 @@ class ArmatureFuncs:
             return armature_name
 
 #----------------------------------------------------------------
-
-# check_vars = lambda *args: any(not lst for lst in [*args])
 
 def get_armature_name():
     def armature_name_auto():
