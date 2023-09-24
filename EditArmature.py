@@ -94,7 +94,7 @@ def interactive_popup(title:str = "Title", content:dict = {"Title":{"type":"labe
                     setattr(op, prop, value)
     bpy.context.window_manager.popup_menu(popup, title=title, icon=icon) 
 
-def collection_excluded(obj:bpy.types.Object, unhide:bool=False) -> bool:
+def is_collection_excluded(obj:bpy.types.Object, unhide:bool=False) -> bool:
     """
     Unexclude & unhide collection if unhide is True\n
     Returns False if object is in any visible collection, else returns True
@@ -888,13 +888,6 @@ class ArmatureMode:
         
 def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> None:
     """["OBJECT", "EDIT", "POSE", "PAINT_WEIGHT"]"""
-    def get_meshes(arm:bpy.types.Object) -> set[bpy.types.Object]:
-        """Valid meshes connected to the armature as a modifier or parent"""
-        objects = bpy.data.objects
-        meshes = {ob for ob in objects if ob in arm.children and ob.type == 'MESH'}
-        meshes |= {ob for ob in objects if ob.type == 'MESH' and ob.modifiers and arm in [mod.object for mod in ob.modifiers if mod.type == 'ARMATURE']}
-        return meshes
-    
     def select_menu(objects:set[bpy.types.Object]) -> None:
         """If more than one valid object is detected, prompt user to select one"""
         title = f"Select which {str(objects[0].type).lower()} to use:"
@@ -910,32 +903,18 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
                 "icon": f"{objects[0].type}_DATA"
                 } for ob in objects}
         interactive_popup(title=title, content=content, icon='VPAINT_HLT')
-
-    def valid_objects_weight_paint(valid_objects):
-        valid_selected = selected_condition(valid_objects)
-        if len(valid_selected) > 1:
-            select_menu(valid_selected)
-        elif len(valid_selected) == 1:
-            target = valid_selected[0]
-            ArmatureMode.weight_paint(obj, target, extend=extend)
-        elif len(valid_objects) > 1:
-            select_menu(valid_objects)
-        elif len(valid_objects) == 1:
-            target = valid_objects[0]
-            ArmatureMode.weight_paint(obj, target, extend=extend)
     
-    def unhide_object(ob:bpy.types.Object, popup:bool = True) -> bool:
+    def unhide_object(ob:bpy.types.Object, popup:bool = True) -> None:
         """Returns True if success, False if failed"""
         if ob.visible_get():
             return True
         # Unhide active object
         ob.hide_set(False)
         ob.hide_viewport = False
-        if collection_excluded(ob, unhide=True):
+        if is_collection_excluded(ob, unhide=True):
             return popup_window(text=f"Unable to unhide '{ob.name}'") if popup else False
-        # Ensure active is selected after unhide
-        ob.select_set(True)
-        return ob.visible_get()
+        #~~ # Ensure active is selected after unhide
+        #~~ ob.select_set(True)
     
     def is_hidden(ob:bpy.types.Object, unhide:bool=True, popup:bool=True) -> bool:
         """Check if object is hidden and raise errors if needed\n
@@ -943,8 +922,9 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
         Returns: False if object is not hidden or unhide succeeded
         """
         if unhide:
-            unhide_success = unhide_object(ob, popup)
-            return not unhide_success
+            unhide_object(ob, popup)
+            if not ob.visible_get():
+                return True
         
         if ob.visible_get():
             return False
@@ -997,12 +977,13 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
     if is_hidden(obj, unhide):
         return
     
-    valid_armatures = lambda mesh_obj: [mod.object for mod in mesh_obj.modifiers if mod.type == 'ARMATURE' and mod.object] # All armatures connected to mesh object
-    arm_condition = lambda arm_obj: [ob for ob in D.objects if [mod for mod in ob.modifiers if mod.type == 'ARMATURE' and mod.object == arm_obj]] # All mesh objects connected to armature object
-    selected_condition = lambda valid_objs: [ob for ob in C.selected_objects if ob != obj and ob in valid_objs] # All selected objects that are in 'valid objects'
+    # mesh_condition = lambda mesh_obj: [mod.object for mod in mesh_obj.modifiers if mod.type == 'ARMATURE' and mod.object] # All armatures connected to mesh object
+    # arm_condition = lambda arm_obj: [ob for ob in D.objects if [mod for mod in ob.modifiers if mod.type == 'ARMATURE' and mod.object == arm_obj]] # All mesh objects connected to armature object
+    # selected_condition = lambda valid_objs: [ob for ob in C.selected_objects if ob != obj and ob in valid_objs] # All selected objects that are in 'valid objects'
     
     if unhide:
-        if not unhide_object(obj, True):
+        unhide_object(obj)
+        if not obj.visible_get():
             return
     
     if obj.type == 'ARMATURE':
@@ -1011,12 +992,12 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
         
         elif set_mode == 'PAINT_WEIGHT':
             # Get all meshes connected to armature
-            valid_meshes = arm_condition(obj)
+            valid_meshes = EditFuncs.valid_meshes(obj)
             if not valid_meshes:
                 return popup_window(text=f"No valid meshes connected to '{obj.name}'")
             
             # Check if any valid meshes are selected and use them if they are
-            valid_selected = selected_condition(valid_meshes)
+            valid_selected = EditFuncs.selected_in_objects(valid_meshes)
             valid_meshes = valid_selected if valid_selected else valid_meshes
             
             # Prompt user to select a mesh if more than one is valid
@@ -1033,12 +1014,12 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
     
     if obj.type == 'MESH':
         # Get all armatures connected to mesh
-        valid_armatures = valid_armatures(obj)
+        valid_armatures = EditFuncs.valid_armatures(obj)
         if not valid_armatures:
             return popup_window(text=f"No valid armatures connected to '{obj.name}'")
         
         # Check if any valid armatures are selected and use them if they are
-        valid_selected = selected_condition(valid_armatures)
+        valid_selected = EditFuncs.selected_in_objects(valid_armatures)
         valid_armatures = valid_selected if valid_selected else valid_armatures
         
         # Prompt user to select an armature if more than one is valid
@@ -1046,9 +1027,29 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
             select_menu(valid_armatures)
         else:
             arm_obj = valid_armatures[0]
+            if is_hidden(arm_obj, unhide):
+                return
             ArmatureMode.set_mode_auto(set_mode, arm_obj, obj, extend)
         
     return
+
+
+import timeit
+class WithTimer:
+    def __init__(self, name:str = "Timer"):
+        self.start = None
+        self.time = None
+        self.name = name
+        
+    def __enter__(self):
+        self.start = timeit.default_timer()
+        return self
+    
+    def __exit__(self, exc_type=None, exc_value=None, traceback=None):
+        self.time = timeit.default_timer() - self.start
+        print(f"\n{self.name}:\n\t{self.time}")
+        self.start = None
+
 
 
 #SECTION ------------ Generate Vertex Weight ------------
@@ -1100,6 +1101,7 @@ def generate_vertex_weights_init() -> list:
     bones = sel_bones if selected_bones_only else bones
     if not bones:
         return popup_window(text="No bones selected")
+    
     verts = obj.data.vertices
     verts = [vert for vert in verts if vert.select] if selected_verts_only else verts
     if not verts:
@@ -1120,7 +1122,6 @@ def generate_vertex_weights(args:list, power:float=3.0, threshold:float=0.01) ->
     obj = C.object
     arm_obj = C.pose_object
     EditFuncs.cleanup_armature_modifiers(armature=arm_obj)
-    
     # Check args
     assert args, "Not enough arguments"
     
@@ -1130,16 +1131,18 @@ def generate_vertex_weights(args:list, power:float=3.0, threshold:float=0.01) ->
     assert verts, "No vertices selected"
     
     # Calculate weights
-    weights = Algo.calculate_vertex_weights(bones, verts, power, threshold)
+    with WithTimer("Calculate vertex weights"):
+        weights = Algo.calculate_vertex_weights(bones, verts, power, threshold)
     
     # Apply weights
-    vgroups = obj.vertex_groups
-    obj.vertex_groups.clear()
-    for vert, bone_weights in weights.items():
-        for bone_name, weight in bone_weights.items():
-            if bone_name not in vgroups:
-                vgroups.new(name=bone_name)
-            vgroups[bone_name].add([vert], weight, 'ADD')
+    with WithTimer("Apply vertex weights"):
+        vgroups = obj.vertex_groups
+        obj.vertex_groups.clear()
+        for vert, bone_weights in weights.items():
+            for bone_name, weight in bone_weights.items():
+                if bone_name not in vgroups:
+                    vgroups.new(name=bone_name)
+                vgroups[bone_name].add([vert], weight, 'ADD')
     
     EditFuncs.set_active_bone(C.active_pose_bone.bone)
 
@@ -1171,7 +1174,7 @@ class CT_SetPaintMode(bpy.types.Operator):
             target.hide_viewport = False
         
         # Check if object is hidden
-        if collection_excluded(target, self.unhide): 
+        if is_collection_excluded(target, self.unhide): 
             popup_window(text=f"{target.type} '{target.name}' is in a hidden collection")
             return {"CANCELLED"}
         if not target.visible_get():
@@ -1183,6 +1186,34 @@ class CT_SetPaintMode(bpy.types.Operator):
         
         ArmatureMode.set_mode_auto(self.mode, arm_obj, mesh_obj, self.extend)
         return {"FINISHED"}
+
+# class CT_GenerateVertexWeights(bpy.types.Operator):
+#     ...
+
+class MyClassName(bpy.types.Operator):
+    bl_idname = "my_operator.my_class_name"
+    bl_label = "My Class Name"
+    bl_description = "Description that shows in blender tooltips"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return True
+
+    def invoke(self, context, event):
+        context.window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        
+        if event.type == "LEFTMOUSE":
+            return {"FINISHED"}
+        
+        if event.type in {"RIGHTMOUSE", "ESC"}:
+            return {"CANCELLED"}
+        
+        return {"RUNNING_MODAL"}
+
 
 
 def register():
