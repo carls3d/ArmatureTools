@@ -5,84 +5,48 @@
 
 import bpy
 import bmesh
-# import numpy as np
-# from mathutils import Vector
 
-from libcpp.vector cimport vector as cpplist
-from libcpp.string cimport string as cppstring
-from libcpp.algorithm cimport sort, clamp, for_each
-from libcpp.numeric cimport accumulate
-from libcpp.unordered_map cimport unordered_map as cppdict
-from libcpp.unordered_set cimport unordered_set as cppset
-from libc.time cimport clock, clock_t, CLOCKS_PER_SEC
-from libc.stdio cimport printf
 from libc.stdlib cimport malloc, free
-from libc.math cimport sqrt, powf, fmaxf, fminf
+from libcpp.vector cimport vector
+from libc.stdio cimport printf
+from libc.math cimport sqrt, powf
+from utils.weights_types cimport Vec3, Vert, Bone, Weight
 
 
-ctypedef struct Vec3:
-    float x, y, z
+cdef class VertsHolder:
+    cdef int size
+    cdef vector[Vert] vertarray
 
-ctypedef struct VGroup:
-    int index
-    cppstring name
+    def __cinit__(self, int size):
+        self.size = size
+        self.vertarray.resize(size)
+    
+    def __dealloc__(self):
+        self.vertarray.clear()
+        
+cdef class BonesHolder:
+    cdef int size
+    cdef vector[Bone] bonearray
 
-ctypedef struct Weight:
-    int group
-    float value
+    def __cinit__(self, int size):
+        self.size = size
+        self.bonearray.resize(size)
 
-ctypedef struct Vert:
-    int index
-    Vec3 co
-    cpplist[Weight] weights
-
-ctypedef struct Bone:
-    cppstring name
-    int group_index
-    Vec3 head, tail, center
+    def __dealloc__(self):
+        self.bonearray.clear()
 
 
 cdef inline float vec_len(Vec3 vec):
-    return sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z)
+    return sqrt(vec.x*vec.x + vec.y*vec.y + vec.z*vec.z)
 
 cdef float length(Vec3 a, Vec3 b):
     return vec_len(Vec3(a.x - b.x, a.y - b.y, a.z - b.z))
 
 
-cdef inline Vec3 vec_center(Vec3 a, Vec3 b):
-    return Vec3((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2)
-
-    
-
-cdef verts_from_bpy(py_verts:list[bpy.types.MeshVertex]):
-    cdef cpplist[Vert] verts
-    cdef int i
-    cdef int n = len(py_verts)
-    for i in range(n):
-        verts.push_back(Vert(py_verts[i].index, Vec3(py_verts[i].co.x, py_verts[i].co.y, py_verts[i].co.z)))
-    return verts
-
-cdef bones_from_bpy(bpy_bones:list[bpy.types.Bone], obj:bpy.types.Object):
-    vgroups = obj.vertex_groups
-    cdef cpplist[Bone] bones
-    for b in bpy_bones:
-        if b.name not in vgroups: continue
-        head = Vec3(b.head_local.x, b.head_local.y, b.head_local.z)
-        tail = Vec3(b.tail_local.x, b.tail_local.y, b.tail_local.z)
-        center = vec_center(head, tail)
-        bones.push_back(Bone(
-            b.name.encode(), 
-            vgroups[b.name].index,
-            head, 
-            tail,
-            center))
-    return bones
-
-
-cdef void calculate_weights(cpplist[Vert] &verts, cpplist[Bone] &bones, float power, float threshold):
+cdef void calculate_weights(vector[Vert] &verts, vector[Bone] &bones, float power, float threshold):
     cdef int vert_len = verts.size()
     cdef int bone_len = bones.size()
-    if vert_len < 1 or bone_len < 2: return
+    if vert_len < 1 or bone_len < 1: return
 
     cdef int i, j
     cdef float dist, total_weight
@@ -94,7 +58,7 @@ cdef void calculate_weights(cpplist[Vert] &verts, cpplist[Bone] &bones, float po
         
         total_weight = 0
         for j in range(bone_len):
-            dist = length(vert.co, bones[j].center)
+            dist = length(vert.co, bones[j].pos)
             dist = 1 / powf(dist, power)
             total_weight += dist
             weight = &vert.weights[j]
@@ -119,8 +83,7 @@ cdef void calculate_weights(cpplist[Vert] &verts, cpplist[Bone] &bones, float po
             weight = &vert.weights[j]
             weight.value /= total_weight
 
-cdef void set_weights(bm:bmesh.types.BMesh, verts:cpplist[Vert]):
-    bm.verts.ensure_lookup_table()
+cdef void set_weights(bm:bmesh.types.BMesh, verts:vector[Vert]):
     dvert_lay = bm.verts.layers.deform.active
     cdef Vert* vert
     cdef int i
@@ -134,23 +97,47 @@ cdef void set_weights(bm:bmesh.types.BMesh, verts:cpplist[Vert]):
             dvert[weight.group] = weight.value
     bm.to_mesh(bpy.context.object.data)
 
+def create_verts_array(verts:list[bpy.types.MeshVertex]):
+    matr = bpy.context.object.matrix_world
+    coords = [matr @ v.co for v in verts]
+    cdef int verts_size = len(verts)
+    holder = VertsHolder(verts_size)
+    cdef int i
+    for i in range(verts_size):
+        # coords = bpy.context.object.matrix_world @ verts[i].co
+        holder.vertarray[i].index = verts[i].index
+        holder.vertarray[i].co.x = coords[i].x
+        holder.vertarray[i].co.y = coords[i].y
+        holder.vertarray[i].co.z = coords[i].z
+    return holder
+
+def create_bones_array(posebones:list[bpy.types.Bone]):
+    vgroups = bpy.context.object.vertex_groups
+    posebones = [b for b in posebones if b.name in vgroups]
+    matr = bpy.context.pose_object.matrix_world
+    coords = [matr @ pb.center for pb in posebones]
+    cdef int bones_size = len(posebones)
+    holder = BonesHolder(bones_size)
+    cdef int i
+    for i in range(bones_size):
+        # coords = matr @ posebones[i].center
+        holder.bonearray[i].group_index = vgroups[posebones[i].name].index
+        holder.bonearray[i].pos.x = coords[i].x
+        holder.bonearray[i].pos.y = coords[i].y
+        holder.bonearray[i].pos.z = coords[i].z
+    return holder
+
 cpdef distance_bones_verts(
-        obj:bpy.types.Object, 
         bm:bmesh.types.BMesh,
-        vertices:list[bpy.types.MeshVertex], 
-        bonelist:list[bpy.types.Bone], 
+        vertsholder:VertsHolder,
+        bonesholder:BonesHolder,
         power:float=2.0, 
         threshold:float=0.01):
-    # if obj.type != 'MESH': return
-    # Bonelist -> bones to operate on
-    # Vertices -> vertices to operate on
-
-    cdef cpplist[Vert] verts = verts_from_bpy(vertices)
-    cdef cpplist[Bone] bones = bones_from_bpy(bonelist, obj)
-
-    calculate_weights(verts, bones, power, threshold)
-    set_weights(bm, verts)
-
+    # posebones -> bones to operate on
+    # bm_verts -> bm_verts to operate on
     
+    # cdef vector[Vert] verts = vertsholder.vertarray
+    # cdef vector[Bone] bones = bonesholder.bonearray
 
-    
+    calculate_weights(vertsholder.vertarray, bonesholder.bonearray, power, threshold)
+    set_weights(bm, vertsholder.vertarray)

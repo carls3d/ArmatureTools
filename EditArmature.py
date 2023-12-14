@@ -2,12 +2,14 @@ import bpy
 import numpy as np
 from mathutils import Vector
 from collections import defaultdict
+import importlib, os, sys
+import bmesh
 
 class ddict(defaultdict):
     __repr__ = dict.__repr__
 
-if __name__ == '__main__':
-    from GenerateArmature import Algo
+# if __name__ == '__main__':
+#     from GenerateArmature import Algo
     
 #TODO - merge chains (average pos of "loop_bones", all weights of loop_bones to all verts affected by "loop_bones")
 #todo - Resample chain 1.(separate mesh and reapply weights) or 2.(set new weights with math)
@@ -21,6 +23,20 @@ if __name__ == '__main__':
 #note     selected - run function on selected bones
 #note     chain - run function on entire chain of selected bones (ex: select first bones of chains in the outliner)
 #note     auto - complex operation
+
+def import_module_from_file(filepath:str, module_name:str) -> object | None:
+    try:
+        file_dir = os.path.dirname(filepath)
+        if os.path.exists(file_dir) and file_dir not in sys.path:
+            sys.path.append(file_dir)
+        if module_name in sys.modules:
+            print("-- Existing")
+            return sys.modules[module_name]
+        print("-- Importing")
+        return importlib.import_module(module_name)
+    except ImportError as e:
+        print("Import error -> platform:", sys.platform)
+        return print(e)
 
 def pprint_dict(d:ddict | dict, indent=0):
     """Pretty print a dictionary"""
@@ -83,6 +99,9 @@ def interactive_popup(title:str = "Title", content:dict = {"Title":{"type":"labe
     
     def popup(self, context):
         # Each element in text is a line in the popup window
+        self:bpy.types.Operator
+        # <class '__main__.SNA_OT_Testop_E2553'>
+        item:dict
         for text, item in content.items():
             item.setdefault("icon", "NONE")
             col = self.layout.column()
@@ -126,6 +145,8 @@ def is_collection_excluded(obj:bpy.types.Object, unhide:bool=False) -> bool:
     else:
         return True
 
+def clamp(value:float, a:float, b:float) -> float:
+    return min(b, max(a, value))
 
 #SECTION ------------ Common operations ------------
 class EditFuncs:
@@ -324,7 +345,7 @@ class EditFuncs:
             assert bpy.context.mode == 'EDIT_ARMATURE', "Expected edit mode"
             if bpy.context.mode == 'EDIT_ARMATURE':
                 bpy.ops.armature.select_linked(all_forks=False)
-                return bpy.context.selected_bones
+                return bpy.context.use_selected_bones
             if bpy.context.mode == 'POSE':
                 bpy.ops.pose.select_linked()
                 return bpy.context.selected_pose_bones
@@ -833,6 +854,7 @@ class ArmatureMode:
             'EDIT': ArmatureMode.edit,
             'POSE': ArmatureMode.pose,
             'PAINT_WEIGHT': ArmatureMode.weight_paint,
+            'MESH_OBJECT': ArmatureMode.mesh_object,
         }
         set_mode[mode](arm_obj, mesh_obj, extend)
     
@@ -863,31 +885,38 @@ class ArmatureMode:
         bpy.ops.object.mode_set(mode='POSE')
     
     @staticmethod
-    def weight_paint(obj:bpy.types.Object, target:bpy.types.Object, extend:bool = False) -> None:
-        # Swap objects if needed
-        mesh_obj = obj if obj.type == 'MESH' else target
-        arm_obj = obj if obj.type == 'ARMATURE' else target
+    def weight_paint(arm_obj:bpy.types.Object, mesh_obj:bpy.types.Object, extend:bool = False) -> None:
         assert mesh_obj.type == 'MESH', "Expected mesh object"
         assert arm_obj.type == 'ARMATURE', "Expected armature object"
         
         # Set object mode
         if bpy.context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        # Clear selection
-        if not extend:
-            bpy.ops.object.select_all(action='DESELECT')
-        
+       
         # Select armature and mesh, set mesh as active
         bpy.ops.object.select_pattern(pattern=arm_obj.name, extend=extend)
-        # arm_obj.select_set(True)
         mesh_obj.select_set(True)
         bpy.context.view_layer.objects.active = mesh_obj
+        
+        # Mesh obj sometimes enters weight paint mode when set as active?
+        bpy.ops.object.mode_set(mode='OBJECT') 
         
         # Set mode
         bpy.ops.paint.weight_paint_toggle()
         
+    @staticmethod
+    def mesh_object(_, mesh_obj:bpy.types.Object, extend:bool = False) -> None:
+        assert mesh_obj.type == 'MESH', "Expected mesh object"
+        if bpy.context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.ops.object.select_pattern(pattern=mesh_obj.name, extend=extend)
+        bpy.context.view_layer.objects.active = mesh_obj
+        # Mesh obj sometimes enters weight paint mode when set as active?
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+        
 def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> None:
-    """["OBJECT", "EDIT", "POSE", "PAINT_WEIGHT"]"""
+    """["OBJECT", "EDIT", "POSE", "PAINT_WEIGHT, MESH_OBJECT"]"""
     def select_menu(objects:set[bpy.types.Object]) -> None:
         """If more than one valid object is detected, prompt user to select one"""
         title = f"Select which {str(objects[0].type).lower()} to use:"
@@ -932,10 +961,8 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
             popup_window(text=f"Unable to enter '{set_mode}' mode while '{ob.name}' is hidden") if popup else True
             return True
     
-    #NOTE pseudo code
-    # - Check if active obj is hidden or in hidden collection
     
-    # ---- ACTIVE OBJ = MESH ----
+    #NOTE ---- ACTIVE OBJ = MESH ----
     # - Check if a valid armature is connected
     # * Armature variable 
     #   - Use selected armature if it's connected or prompt user to select one if more than one is connected
@@ -951,25 +978,36 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
     #   - Select armature and mesh (extend)
     #   - Set mesh as active
     #   - Set weight paint mode
+    # 
+    # * Mesh object
+    #   - If mode != 'OBJECT', set mode to object
+
     
-    # ---- ACTIVE OBJ = ARMATURE ----
+    #NOTE ---- ACTIVE OBJ = ARMATURE ----
     # * Object, Edit, Pose
     #   - Set (Object | Edit | Pose) mode
-    # * Weight paint
-    #   - Check if a valid mesh is connected -> Store list
+    # 
+    # * Weight paint, Mesh object
+    #   - Check if a valid mesh is connected to armature -> Store list
     #       - Check if valid mesh is in selected
     #           - If not in selected, use valid mesh list
     #       - Set mesh
     #           - One valid mesh -> Continue
     #           - Multiple valid meshes -> Prompt user to select one -> Continue
     #   - Check if mesh is hidden or in hidden collection
-    #   - Select armature and mesh (extend)
-    #   - Set mesh as active
-    #   - Set weight paint mode
+    #       * Weight paint:
+    #           - Select armature and mesh (extend)
+    #           - Set mesh as active
+    #           - Set weight paint mode
+    #       * Mesh object:
+    #           - Set object mode
+    #           - Select mesh and set as active
+    
     
     C = bpy.context
-    D = bpy.data
     obj = C.object
+    arm_obj = None
+    mesh_obj = None
     
     if obj.type not in ['MESH', 'ARMATURE']:
         return popup_window(text=f"Invalid object type '{obj.type}'")
@@ -977,22 +1015,22 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
     if is_hidden(obj, unhide):
         return
     
-    # mesh_condition = lambda mesh_obj: [mod.object for mod in mesh_obj.modifiers if mod.type == 'ARMATURE' and mod.object] # All armatures connected to mesh object
-    # arm_condition = lambda arm_obj: [ob for ob in D.objects if [mod for mod in ob.modifiers if mod.type == 'ARMATURE' and mod.object == arm_obj]] # All mesh objects connected to armature object
-    # selected_condition = lambda valid_objs: [ob for ob in C.selected_objects if ob != obj and ob in valid_objs] # All selected objects that are in 'valid objects'
-    
     if unhide:
         unhide_object(obj)
         if not obj.visible_get():
             return
     
     if obj.type == 'ARMATURE':
-        if set_mode in ['OBJECT', 'EDIT', 'POSE']:
-            ArmatureMode.set_mode_auto(set_mode, obj, None, extend)
+        arm_obj = C.object
+        if set_mode not in ['OBJECT', 'EDIT', 'POSE', 'PAINT_WEIGHT', 'MESH_OBJECT']:
+            return popup_window(text=f"Invalid mode '{set_mode}' for armature object")
         
-        elif set_mode == 'PAINT_WEIGHT':
+        if set_mode in ['OBJECT', 'EDIT', 'POSE']:
+            return ArmatureMode.set_mode_auto(set_mode, obj, None, extend)
+        
+        elif set_mode in ['PAINT_WEIGHT', 'MESH_OBJECT']:
             # Get all meshes connected to armature
-            valid_meshes = EditFuncs.valid_meshes(obj)
+            valid_meshes = EditFuncs.valid_meshes(arm_obj)
             if not valid_meshes:
                 return popup_window(text=f"No valid meshes connected to '{obj.name}'")
             
@@ -1002,35 +1040,35 @@ def editbones_set_mode(set_mode:str, unhide:bool=True, extend:bool=False) -> Non
             
             # Prompt user to select a mesh if more than one is valid
             if len(valid_meshes) > 1:
-                select_menu(valid_meshes)
+                return select_menu(valid_meshes)
             else:
                 mesh_obj = valid_meshes[0]
-                if is_hidden(mesh_obj, unhide):
-                    return # Cancel if mesh is hidden
-                ArmatureMode.weight_paint(mesh_obj, obj, extend)
-            return
-        else:
-            return popup_window(text=f"Invalid mode '{set_mode}' for armature object")
+                if is_hidden(mesh_obj, unhide): return # Cancel if mesh is hidden
+                print(set_mode, mesh_obj.name)
+                return ArmatureMode.set_mode_auto(set_mode, arm_obj, mesh_obj, extend)
     
     if obj.type == 'MESH':
-        # Get all armatures connected to mesh
-        valid_armatures = EditFuncs.valid_armatures(obj)
-        if not valid_armatures:
-            return popup_window(text=f"No valid armatures connected to '{obj.name}'")
+        arm_obj = None
+        if set_mode != 'MESH_OBJECT':
+            # Get all armatures connected to mesh
+            valid_armatures = EditFuncs.valid_armatures(obj)
+            if not valid_armatures:
+                return popup_window(text=f"No valid armatures connected to '{obj.name}'")
+            
+            # Check if any valid armatures are selected and use them if they are
+            valid_selected = EditFuncs.selected_in_objects(valid_armatures)
+            valid_armatures = valid_selected if valid_selected else valid_armatures
+            
+            # Prompt user to select an armature if more than one is valid
+            if len(valid_armatures) > 1: # Exits if true
+                return select_menu(valid_armatures) 
+            else:
+                arm_obj = valid_armatures[0]
+                if is_hidden(arm_obj, unhide): # Exits if true
+                    return
         
-        # Check if any valid armatures are selected and use them if they are
-        valid_selected = EditFuncs.selected_in_objects(valid_armatures)
-        valid_armatures = valid_selected if valid_selected else valid_armatures
-        
-        # Prompt user to select an armature if more than one is valid
-        if len(valid_armatures) > 1:
-            select_menu(valid_armatures)
-        else:
-            arm_obj = valid_armatures[0]
-            if is_hidden(arm_obj, unhide):
-                return
-            ArmatureMode.set_mode_auto(set_mode, arm_obj, obj, extend)
-        
+        ArmatureMode.set_mode_auto(set_mode, arm_obj, obj, extend)
+   
     return
 
 
@@ -1053,7 +1091,18 @@ class WithTimer:
 
 
 #SECTION ------------ Generate Vertex Weight ------------
-def generate_vertex_weights_init() -> list:
+# import platform
+# current_platform = platform.system()
+# if current_platform == "Windows": 
+#     from . import your_module_win as VertexWeights
+# elif current_platform == "Darwin":  # macOS
+#     from . import your_module_mac as VertexWeights
+# elif current_platform == "Linux":
+#     from . import your_module_linux as VertexWeights
+# else:
+#     raise NotImplementedError("Platform not supported")
+
+def generate_vertex_weights_init(filepath:str, module_name:str) -> list:
     selected_bones_only = False
     selected_verts_only = False
     
@@ -1063,22 +1112,35 @@ def generate_vertex_weights_init() -> list:
     # return popup_window(text="Not enough arguments")
     
     C = bpy.context
-    D = bpy.data
     obj = C.object
+    arm_obj = C.pose_object
     
     if not obj or obj.type != 'MESH': 
         return popup_window(text="Invalid object. Select a mesh object")
-    
-    # Paint weight mode only
-    if bpy.context.mode != 'PAINT_WEIGHT':
+    if bpy.context.mode != 'PAINT_WEIGHT': # Paint weight mode only
         return popup_window(text="Only weight paint mode is currently supported")
-    
-    if not C.pose_object:
+    if not arm_obj:
         return popup_window(text="No armature selected")
     
+    
+    file_dir = os.path.dirname(filepath)
+    # import_module = module_name not in sys.modules
+   
+    if os.path.exists(file_dir):
+        try:
+            if file_dir not in sys.path:
+                sys.path.append(file_dir)
+            importlib.import_module(module_name)
+            print(f"{module_name} imported")
+            importlib.import_module("ctools_init_weights")
+            print(f"ctools_init_weights imported")
+        except ImportError as e: 
+            print(f"!! Error: Import_lib failed: !!\n", e)
+            pass
+    
     valid_armatures = EditFuncs.valid_armatures(obj)
-    selected_meshes = EditFuncs.selected_in_objects(valid_armatures)
-    valid_armatures = selected_meshes if selected_meshes else valid_armatures
+    selected_armatures = EditFuncs.selected_in_objects(valid_armatures)
+    valid_armatures = selected_armatures if selected_armatures else valid_armatures
     
     if not valid_armatures:
         return popup_window(text="Mesh has no connected armature")
@@ -1086,7 +1148,6 @@ def generate_vertex_weights_init() -> list:
     #TODO - Temp (Only uses first valid armature. Should prompt user to select one if more than one is valid)
     # arm_obj = valid_armatures[0]
     
-    arm_obj = C.pose_object
     assert arm_obj in valid_armatures, "I don't know how you managed to do this, so please tell me how you did it if you want me to fix it"
     
     # Selected bones
@@ -1099,17 +1160,23 @@ def generate_vertex_weights_init() -> list:
     
     bones = arm_obj.data.bones
     bones = sel_bones if selected_bones_only else bones
-    if not bones:
-        return popup_window(text="No bones selected")
-    
+    posebones = [arm_obj.pose.bones[bone.name] for bone in bones]
     verts = obj.data.vertices
-    verts = [vert for vert in verts if vert.select] if selected_verts_only else verts
-    if not verts:
-        return popup_window(text="No vertices selected")
-    return bones, verts
+    verts = [vert for vert in verts if vert.select] if selected_verts_only else verts[:]
+    
+    if not bones: return popup_window(text="No bones selected")
+    if not verts: return popup_window(text="No vertices selected")
+    
+    
+    ctools_weights = sys.modules.get(module_name)
+    bonesholder = ctools_weights.create_bones_array(posebones)
+    vertsholder = ctools_weights.create_verts_array(verts)
+    
+    EditFuncs.cleanup_armature_modifiers(armature=arm_obj)
+    return bonesholder, vertsholder
 
 def generate_vertex_weights(args:list, power:float=3.0, threshold:float=0.01) -> None:
-    #TODO - Option: Preserve MeshIsland-VertexGroup Associations
+    #TODO - Option: Preserve "MeshIsland" --> "VertexGroup" Associations
     
     #TODO - Options in edit_mesh: (Default = Selected vertices)
     #TODO   - All verts | Selected verts | Linked mesh islands        -> use associated bones
@@ -1118,31 +1185,50 @@ def generate_vertex_weights(args:list, power:float=3.0, threshold:float=0.01) ->
     #TODO - Options in [edit_bones, pose_bones, paint_weight]: (Default = All bones)
     #TODO   - All bones | Selected bones | Linked bone chains         -> use associated mesh island 
     
+    #todo - check for locked bones
+    #todo - 
+    # Inputs:
+    #   List of vertices to be affected
+    #       List of vertex groups used by vertices
+    #   List of bones to be affected
+    
+    
     C = bpy.context
     obj = C.object
-    arm_obj = C.pose_object
-    EditFuncs.cleanup_armature_modifiers(armature=arm_obj)
     # Check args
     assert args, "Not enough arguments"
+    bonesholder, vertsholder = args
+    assert bonesholder, "No bones selected"
+    assert vertsholder, "No vertices selected"
     
-    # Set args
-    bones, verts = args
-    assert bones, "No bones selected"
-    assert verts, "No vertices selected"
+    power = clamp(power, 1.0, 10.0)
+    threshold = clamp(threshold, 0.0, 1.0)
     
-    # Calculate weights
-    with WithTimer("Calculate vertex weights"):
-        weights = Algo.calculate_vertex_weights(bones, verts, power, threshold)
+    ctools_weights = sys.modules.get("ctools_weights")
+    if ctools_weights:
+        # with WithTimer("New - Calculate vertex weights"):
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        ctools_weights.distance_bones_verts(bm, vertsholder, bonesholder, power, threshold)
+        bm.free()
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+    else:
+        return popup_window(text="New library not found")
+        # print("New library not found, using old method")
+        # # with WithTimer("Old Calculate vertex weights (slow)"):
+        # weights = Algo.calculate_vertex_weights(bones, verts, power, threshold)
     
-    # Apply weights
-    with WithTimer("Apply vertex weights"):
-        vgroups = obj.vertex_groups
-        obj.vertex_groups.clear()
-        for vert, bone_weights in weights.items():
-            for bone_name, weight in bone_weights.items():
-                if bone_name not in vgroups:
-                    vgroups.new(name=bone_name)
-                vgroups[bone_name].add([vert], weight, 'ADD')
+        # vgroups = obj.vertex_groups
+        # vgroups.clear()
+        # for vert_idx, bone_weights in weights.items():
+        #     for bone_idx, weight in bone_weights.items():
+        #         bone_name = bones[bone_idx].name
+        #         if bone_name not in vgroups:
+        #             vgroups.new(name=bone_name)
+        #         vgroups[bone_name].add([vert_idx], weight, 'ADD')
     
     EditFuncs.set_active_bone(C.active_pose_bone.bone)
 
@@ -1158,7 +1244,13 @@ class CT_SetPaintMode(bpy.types.Operator):
     pattern: bpy.props.StringProperty(default="*")
     extend: bpy.props.BoolProperty(default=False)
     unhide: bpy.props.BoolProperty(default=False)
-    mode: bpy.props.EnumProperty(name='mode', items=[('OBJECT', 'OBJECT', '', 0, 0), ('EDIT', 'EDIT', '', 0, 1), ('POSE', 'POSE', '', 0, 2), ('PAINT_WEIGHT', 'PAINT_WEIGHT', '', 0, 3)])
+    mode: bpy.props.EnumProperty(name='mode', items=[
+        ('OBJECT', 'OBJECT', '', 0, 0), 
+        ('EDIT', 'EDIT', '', 0, 1), 
+        ('POSE', 'POSE', '', 0, 2), 
+        ('PAINT_WEIGHT', 'PAINT_WEIGHT', '', 0, 3),
+        ('MESH_OBJECT', 'MESH_OBJECT', '', 0, 4)
+        ])
     
     @classmethod
     def poll(cls, context):
@@ -1187,8 +1279,179 @@ class CT_SetPaintMode(bpy.types.Operator):
         ArmatureMode.set_mode_auto(self.mode, arm_obj, mesh_obj, self.extend)
         return {"FINISHED"}
 
-# class CT_GenerateVertexWeights(bpy.types.Operator):
-#     ...
+class CT_GenerateVertexWeights(bpy.types.Operator):
+    bl_idname = "ct.generate_vertex_weights"
+    bl_label = "Generate Vertex Weights"
+    bl_description = ""
+    bl_options = {"REGISTER", "UNDO"}
+    
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
+    power: bpy.props.FloatProperty(default=3.0, min=1.0, max=15.0, step=1.0, subtype='FACTOR')
+    threshold: bpy.props.FloatProperty(default=0.1, min=0.0, max=1.0, step=0.01, subtype='FACTOR')
+    use_selected_bones: bpy.props.BoolProperty(default=False)
+    use_selected_verts: bpy.props.BoolProperty(default=False)
+    phase_enum: bpy.props.EnumProperty(name='phase_enum', items=[
+        ('SETUP', 'Setup', '', 117, 0),
+        ('RUN', 'Run', '', 495, 1),
+        ])
+        
+    awaiting_cancel:bool
+    module_name: str
+    module: object
+    bm: bmesh.types.BMesh
+    vertsholder: bpy.types.PointerProperty
+    bonesholder: bpy.types.PointerProperty
+    
+    @classmethod
+    def poll(cls, context):
+        conditions = [
+            context.mode == 'PAINT_WEIGHT', # Valid mode
+            context.object and context.object.type == 'MESH' and context.object.data.vertices, # Valid mesh
+            context.pose_object and context.pose_object.pose.bones, # Valid armature
+            ]
+        return all(conditions)
+    
+    def __init__(self):
+        self.awaiting_cancel = False
+        self.module_name = "ctools_weights"
+        self.module = None
+        self.bm = None
+        self.vertsholder = None
+        self.bonesholder = None
+        self.phase_enum = 'SETUP'
+    
+    def __del__(self):
+        if self.bm and self.bm.is_valid:
+            self.bm.free()
+    
+    def report_error(self, msg:str):
+        self.awaiting_cancel = True
+        self.report({'ERROR'}, msg)
+        return {"CANCELLED"}
+            
+    def setup_mesh(self, context):
+        if not self.module:
+            return self.report_error("Module not found")
+        obj = context.object
+        if self.bm and self.bm.is_valid:
+            self.bm.free()
+        self.bm = bmesh.new()
+        self.bm.from_mesh(obj.data)
+        self.bm.verts.ensure_lookup_table()
+        verts = None
+        if not self.bm.verts:
+            self.vertsholder = None
+            return self.report_error("No vertices found")
+        if self.use_selected_verts:
+            verts = [v for v in self.bm.verts if v.select]
+            if not verts: 
+                self.vertsholder = None
+                return self.report_error("No vertices selected")
+        else:
+            verts = self.bm.verts[:]
+            assert verts, "No vertices found"
+        
+        self.vertsholder = self.module.create_verts_array(verts)
+        
+        
+    def setup_bones(self, context, invoke=False):
+        if not self.module:
+            return self.report_error("Module not found")
+        
+        bones = []
+        if self.use_selected_bones:
+            bones = context.selected_pose_bones[:]
+            if not bones:
+                return self.report_error("No bones selected")
+        else:
+            bones = context.pose_object.pose.bones[:]
+            if not bones:
+                return self.report_error("No bones found")
+            
+        if not context.active_pose_bone:
+            context.pose_object.data.bones.active = bones[0]
+        
+        self.bonesholder = self.module.create_bones_array(bones)
+                
+                
+    def draw(self, context):
+        layout = self.layout
+        col = layout.column(align=True)
+        col.scale_y = 1.3
+        phase_row = col.row(align=True)
+        phase_row.prop(self, "phase_enum", expand=True)
+        col.separator()
+        
+        setup = self.phase_enum == 'SETUP'
+        run = self.phase_enum == 'RUN'
+        
+        row = col.row(align=False)
+        col_L = row.column(align=False)
+        col_R = row.column(align=False)
+        col_L.alignment = 'LEFT'
+        
+        col_L_setup = col_L.column()
+        col_L_setup.enabled = setup
+        col_L_setup.label(text="Selected: ")
+        
+        col_L_run = col_L.column()
+        col_L_run.enabled = run
+        col_L_run.label(text="Power: ")
+        col_L_run.label(text="Threshold: ")
+        
+        sel_row = col_R.row(align=True)
+        sel_row.enabled = setup
+        sel_row.prop(self, "use_selected_verts", text='Verts', icon_value=546)
+        sel_row.prop(self, "use_selected_bones", text='Bones', icon_value=505)
+        col_R_run = col_R.column()
+        col_R_run.enabled = run
+        col_R_run.prop(self, "power", text="")
+        col_R_run.prop(self, "threshold", text="")
+        
+        
+        
+    def invoke(self, context, event):
+        self.module = import_module_from_file(self.filepath, self.module_name)
+        if not self.module:
+            return self.report_error("Module not found")
+        
+        self.setup_bones(context)
+        self.setup_mesh(context)
+        
+        if self.awaiting_cancel: return {"CANCELLED"}
+        
+        context.window_manager.invoke_props_popup(self, event)
+        return self.execute(context)
+        
+    def execute(self, context):
+        if self.awaiting_cancel: return {"CANCELLED"}
+        if not self.module: 
+            return self.report_error("Module not found")
+        
+        match self.phase_enum:
+            case 'SETUP':
+                self.setup_bones(context)
+                self.setup_mesh(context)
+            case 'RUN':
+                if len(context.selected_pose_bones) > 1:
+                    for posebone in context.selected_pose_bones:
+                        posebone.bone.select = posebone == context.active_pose_bone
+                
+                self.module.distance_bones_verts(
+                    self.bm, 
+                    self.vertsholder, 
+                    self.bonesholder, 
+                    self.power, 
+                    self.threshold)
+            
+        if self.awaiting_cancel: return {"CANCELLED"}
+        
+        
+        for area in bpy.context.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+        return {"FINISHED"}
+    
 
 class MyClassName(bpy.types.Operator):
     bl_idname = "my_operator.my_class_name"
@@ -1215,9 +1478,15 @@ class MyClassName(bpy.types.Operator):
         return {"RUNNING_MODAL"}
 
 
+operators = [
+    CT_SetPaintMode,
+    CT_GenerateVertexWeights,
+]
 
 def register():
-    bpy.utils.register_class(CT_SetPaintMode)
+    for op in operators:
+        bpy.utils.register_class(op)
 
 def unregister():
-    bpy.utils.unregister_class(CT_SetPaintMode)
+    for op in operators:
+        bpy.utils.unregister_class(op)
