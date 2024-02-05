@@ -1,0 +1,4 @@
+.vscode/
+__pycache__/
+cython_testing/
+weight_algorithms/build/

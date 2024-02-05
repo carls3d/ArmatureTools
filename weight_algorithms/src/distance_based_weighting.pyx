@@ -46,12 +46,14 @@ cdef float length(Vec3 a, Vec3 b):
 cdef void calculate_weights(vector[Vert] &verts, vector[Bone] &bones, float power, float threshold):
     cdef int vert_len = verts.size()
     cdef int bone_len = bones.size()
-    if vert_len < 1 or bone_len < 1: return
+    if vert_len < 1 or bone_len < 1: 
+        return
 
     cdef int i, j
     cdef float dist, total_weight
     cdef Vert* vert
     cdef Weight* weight
+    
     for i in range(vert_len):
         vert = &verts[i]
         vert.weights.resize(bone_len)
@@ -83,7 +85,7 @@ cdef void calculate_weights(vector[Vert] &verts, vector[Bone] &bones, float powe
             weight = &vert.weights[j]
             weight.value /= total_weight
 
-cdef void set_weights(bm:bmesh.types.BMesh, verts:vector[Vert]):
+cdef void set_weights(bm:bmesh.types.BMesh, verts:vector[Vert], replace:bool=True):
     dvert_lay = bm.verts.layers.deform.active
     cdef Vert* vert
     cdef int i
@@ -91,7 +93,7 @@ cdef void set_weights(bm:bmesh.types.BMesh, verts:vector[Vert]):
     for i in range(n):
         vert = &verts[i]
         dvert = bm.verts[vert.index][dvert_lay]
-        dvert.clear()
+        if replace: dvert.clear()
         for weight in vert.weights:
             if weight.value == 0: continue
             dvert[weight.group] = weight.value

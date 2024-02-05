@@ -1233,6 +1233,30 @@ def generate_vertex_weights(args:list, power:float=3.0, threshold:float=0.01) ->
     EditFuncs.set_active_bone(C.active_pose_bone.bone)
 
 
+def resample_bone_weights():
+    C = bpy.context
+    selected_bones = C.selected_pose_bones
+    vgroups = C.object.vertex_groups
+    sel_groups = [vgroups[group.name].index for group in selected_bones]
+    sel_verts = [v for v in C.object.data.vertices if v.select]
+    
+    weights = {}
+    # {grp_idx: {vert_idx: weight}}
+    for v in sel_verts:
+        for grp in v.groups:
+            if grp.group not in sel_groups: continue
+            weights.setdefault(grp.group, {})
+            weights[grp.group][v.index] = grp.weight
+    print("----")
+    sum_weights = {}
+    # {vert_idx: sum_weights}
+    for grp, weights in weights.items():
+        for vert, weight in weights.items():
+            sum_weights.setdefault(vert, 0)
+            sum_weights[vert] += weight
+    
+    print(sum_weights)
+
 
 #SECTION ------------ Operators ------------
 class CT_SetPaintMode(bpy.types.Operator):
@@ -1301,6 +1325,8 @@ class CT_GenerateVertexWeights(bpy.types.Operator):
     bm: bmesh.types.BMesh
     vertsholder: bpy.types.PointerProperty
     bonesholder: bpy.types.PointerProperty
+    invoked: bool
+    # hide_store: list
     
     @classmethod
     def poll(cls, context):
@@ -1318,12 +1344,30 @@ class CT_GenerateVertexWeights(bpy.types.Operator):
         self.bm = None
         self.vertsholder = None
         self.bonesholder = None
-        self.phase_enum = 'SETUP'
+        self.invoked = False
+        # self.hide_store = [
+        #     [b.hide for b in bpy.context.pose_object.data.bones],
+        #     [bpy.context.object.data.use_paint_mask, bpy.context.object.data.use_paint_mask_vertex]]
+        
     
     def __del__(self):
-        if self.bm and self.bm.is_valid:
-            self.bm.free()
-    
+        # print("__Deleting")
+        try:
+            if self.bm and self.bm.is_valid:
+                self.bm.free()
+        except Exception as e:
+            print(e)
+        # try:
+        #     C = bpy.context
+        #     for b in self.hide_store[0]:
+        #         C.selected_pose_bones[b] = self.hide_store[0][b]
+        #     C.object.data.use_paint_mask = self.hide_store[1][0]
+        #     C.object.data.use_paint_mask_vertex = self.hide_store[1][1]
+        #     print("Restored hide store")
+        # except Exception as e:
+        #     print(e)
+        # print("__Deleted")
+        
     def report_error(self, msg:str):
         self.awaiting_cancel = True
         self.report({'ERROR'}, msg)
@@ -1409,8 +1453,8 @@ class CT_GenerateVertexWeights(bpy.types.Operator):
         col_R_run.prop(self, "threshold", text="")
         
         
-        
     def invoke(self, context, event):
+        self.invoked = True
         self.module = import_module_from_file(self.filepath, self.module_name)
         if not self.module:
             return self.report_error("Module not found")
@@ -1425,8 +1469,21 @@ class CT_GenerateVertexWeights(bpy.types.Operator):
         
     def execute(self, context):
         if self.awaiting_cancel: return {"CANCELLED"}
+        if not self.invoked:
+            self.module = import_module_from_file(self.filepath, self.module_name)
         if not self.module: 
             return self.report_error("Module not found")
+        
+        if not self.invoked:
+            self.setup_bones(context)
+            self.setup_mesh(context)
+            self.invoked = True
+        
+        if self.use_selected_bones:
+            bpy.ops.pose.hide(unselected=True)
+        if self.use_selected_verts:
+            bpy.context.object.data.use_paint_mask = True
+        
         
         match self.phase_enum:
             case 'SETUP':
@@ -1445,7 +1502,6 @@ class CT_GenerateVertexWeights(bpy.types.Operator):
                     self.threshold)
             
         if self.awaiting_cancel: return {"CANCELLED"}
-        
         
         for area in bpy.context.screen.areas:
             if area.type == 'VIEW_3D':
