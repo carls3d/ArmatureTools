@@ -1169,6 +1169,7 @@ def generate_vertex_weights_init(filepath:str, module_name:str) -> list:
     
     
     ctools_weights = sys.modules.get(module_name)
+    import weight_algorithms.src
     bonesholder = ctools_weights.create_bones_array(posebones)
     vertsholder = ctools_weights.create_verts_array(verts)
     
@@ -1265,16 +1266,16 @@ class CT_SetPaintMode(bpy.types.Operator):
     bl_description = "Description"
     bl_options = {"REGISTER"}
 
-    pattern: bpy.props.StringProperty(default="*")
-    extend: bpy.props.BoolProperty(default=False)
-    unhide: bpy.props.BoolProperty(default=False)
+    pattern: bpy.props.StringProperty(default="*") # type: ignore
+    extend: bpy.props.BoolProperty(default=False) # type: ignore
+    unhide: bpy.props.BoolProperty(default=False) # type: ignore
     mode: bpy.props.EnumProperty(name='mode', items=[
         ('OBJECT', 'OBJECT', '', 0, 0), 
         ('EDIT', 'EDIT', '', 0, 1), 
         ('POSE', 'POSE', '', 0, 2), 
         ('PAINT_WEIGHT', 'PAINT_WEIGHT', '', 0, 3),
         ('MESH_OBJECT', 'MESH_OBJECT', '', 0, 4)
-        ])
+        ]) # type: ignore
     
     @classmethod
     def poll(cls, context):
@@ -1309,15 +1310,15 @@ class CT_GenerateVertexWeights(bpy.types.Operator):
     bl_description = ""
     bl_options = {"REGISTER", "UNDO"}
     
-    filepath: bpy.props.StringProperty(subtype="FILE_PATH")
-    power: bpy.props.FloatProperty(default=3.0, min=1.0, max=15.0, step=1.0, subtype='FACTOR')
-    threshold: bpy.props.FloatProperty(default=0.1, min=0.0, max=1.0, step=0.01, subtype='FACTOR')
-    use_selected_bones: bpy.props.BoolProperty(default=False)
-    use_selected_verts: bpy.props.BoolProperty(default=False)
+    filepath: bpy.props.StringProperty(subtype="FILE_PATH") # type: ignore
+    power: bpy.props.FloatProperty(default=3.0, min=1.0, max=15.0, step=1.0, subtype='FACTOR') # type: ignore
+    threshold: bpy.props.FloatProperty(default=0.1, min=0.0, max=1.0, step=0.01, subtype='FACTOR') # type: ignore
+    use_selected_bones: bpy.props.BoolProperty(default=False) # type: ignore
+    use_selected_verts: bpy.props.BoolProperty(default=False) # type: ignore
     phase_enum: bpy.props.EnumProperty(name='phase_enum', items=[
         ('SETUP', 'Setup', '', 117, 0),
         ('RUN', 'Run', '', 495, 1),
-        ])
+        ]) # type: ignore
         
     awaiting_cancel:bool
     module_name: str

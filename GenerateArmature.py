@@ -237,21 +237,23 @@ class Algo:
         islands = []
         for i in range(max_isl):
             if not copy_verts: break # Stop if no more verts
-            first = set()
-            first.add(copy_verts.pop())
+            first = {copy_verts.pop()}
             second = set()
             
-            verts_ind = []
+            new_island = set()
             for i in range(len(copy_verts)-1):
                 if i: first = second
-                second = {v for vertex in first for edge in vertex.link_edges for v in edge.verts}
-                selected = first.intersection(second)
+                second = first.copy()
+                second.update(edge.other_vert(vertex) for vertex in first for edge in vertex.link_edges)
                 
-                for v in selected.copy():
-                    verts_ind.append(bm.verts[v.index])
-                    copy_verts.discard(v)
+                # Elements that are in both first and second
+                selected = first.intersection(second)
+                # Add selected to island
+                new_island.update(v for v in selected)
+                # Remove selected from copy_verts
+                copy_verts.difference_update(new_island)
                 if first == second: break
-            islands.append(verts_ind)
+            islands.append(new_island)
         return islands
     
     @staticmethod

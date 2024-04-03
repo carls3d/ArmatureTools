@@ -2,3 +2,6 @@
 __pycache__/
 cython_testing/
 weight_algorithms/build/
+*.html
+*.pyd
+weight_algorithms/notes.md

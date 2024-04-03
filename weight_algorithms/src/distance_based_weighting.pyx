@@ -6,9 +6,7 @@
 import bpy
 import bmesh
 
-from libc.stdlib cimport malloc, free
 from libcpp.vector cimport vector
-from libc.stdio cimport printf
 from libc.math cimport sqrt, powf
 from utils.weights_types cimport Vec3, Vert, Bone, Weight
 
@@ -99,7 +97,8 @@ cdef void set_weights(bm:bmesh.types.BMesh, verts:vector[Vert], replace:bool=Tru
             dvert[weight.group] = weight.value
     bm.to_mesh(bpy.context.object.data)
 
-def create_verts_array(verts:list[bpy.types.MeshVertex]):
+
+cpdef create_verts_array(verts:list[bpy.types.MeshVertex]):
     matr = bpy.context.object.matrix_world
     coords = [matr @ v.co for v in verts]
     cdef int verts_size = len(verts)
@@ -113,7 +112,7 @@ def create_verts_array(verts:list[bpy.types.MeshVertex]):
         holder.vertarray[i].co.z = coords[i].z
     return holder
 
-def create_bones_array(posebones:list[bpy.types.Bone]):
+cpdef create_bones_array(posebones:list[bpy.types.Bone]):
     vgroups = bpy.context.object.vertex_groups
     posebones = [b for b in posebones if b.name in vgroups]
     matr = bpy.context.pose_object.matrix_world

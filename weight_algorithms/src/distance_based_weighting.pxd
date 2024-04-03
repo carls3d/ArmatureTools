@@ -3,48 +3,24 @@
 # cython: cdivision = True
 # cython: boundscheck = False
 
-import bpy
-import bmesh
-
 from libcpp.vector cimport vector
-
-ctypedef struct Vec3:
-    float x, y, z
-
-ctypedef struct Weight:
-    int group
-    float value
-
-ctypedef struct Vert:
-    int index
-    Vec3 co
-    vector[Weight] weights
-
-ctypedef struct Bone:
-    int group_index
-    Vec3 pos
-
+from utils.weights_types cimport Vec3, Vert, Bone, Weight
+import bmesh
+import bpy
 
 cdef class VertsHolder:
-    cdef int size
-    cdef vector[Vert] vertarray
+    cdef public int size
+    cdef public vector[Vert] vertarray
 
 cdef class BonesHolder:
-    cdef int size
-    cdef vector[Bone] bonearray
+    cdef public int size
+    cdef public vector[Bone] bonearray
 
-cdef inline float vec_len(Vec3 vec): ...
-cdef float length(Vec3 a, Vec3 b): ...
+cdef inline float vec_len(Vec3 vec)
+cdef float length(Vec3 a, Vec3 b)
+cdef void calculate_weights(vector[Vert] &verts, vector[Bone] &bones, float power, float threshold)
+cdef void set_weights(bm:bmesh.types.BMesh, verts:vector[Vert], replace:bool=True)
 
-cdef void calculate_weights(vector[Vert] &verts, vector[Bone] &bones, float power, float threshold): ...
-cdef void set_weights(bm:bmesh.types.BMesh, verts:vector[Vert]): ...
-
-def create_verts_array(verts:list[bpy.types.MeshVertex]) -> VertsHolder: ...
-def create_bones_array(posebones:list[bpy.types.Bone]) -> BonesHolder: ...
-
-cpdef distance_bones_verts(
-        bm:bmesh.types.BMesh,
-        vertsholder:VertsHolder,
-        bonesholder:BonesHolder,
-        power:float=2.0, 
-        threshold:float=0.01): ...
+cpdef create_verts_array(verts:list[bpy.types.MeshVertex])
+cpdef create_bones_array(posebones:list[bpy.types.Bone])
+cpdef distance_bones_verts(bm:bmesh.types.BMesh, vertsholder:VertsHolder, bonesholder:BonesHolder, power:float=2.0, threshold:float=0.01)
