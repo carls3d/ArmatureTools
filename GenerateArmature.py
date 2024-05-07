@@ -1,6 +1,7 @@
 import bpy
 import numpy as np
 import bmesh
+from bpy.types import Operator
 from math import dist as math_dist
 from itertools import chain
 from mathutils import Vector, Matrix
@@ -12,7 +13,7 @@ from collections import defaultdict
 
 class ddict(defaultdict):
     __repr__ = dict.__repr__
-    
+
 if __name__ == '__main__':
     from EditArmature import EditFuncs, WithTimer
 
@@ -37,7 +38,7 @@ def sel_vertex(verts:bmesh.types.BMVertSeq, vert_sel:str = 'Face area') -> set[b
         sel_index = np.argmin(face_area)
     else: 
         sel_index = np.argmax([len(v.link_edges) for v in verts])
-    return {verts[sel_index]}
+    return {list(verts)[sel_index]}
 
 def recursive_dict_print(item:dict) -> None:
     """Print a nested dict in a readable format"""
@@ -85,7 +86,7 @@ class Capturing(list):
         self.extend(self._stringio.getvalue().splitlines())
         del self._stringio    # free up some memory
         sys.stdout = self._stdout
-        
+
 class Algo:
     
     @classmethod
@@ -257,6 +258,10 @@ class Algo:
         return islands
     
     @staticmethod
+    def init_vertex_weights():
+        ...
+    
+    @staticmethod
     def calculate_vertex_weights(bones:list[bpy.types.Bone], vertices:list[bpy.types.MeshVertex], power:float, threshold:float) -> dict[int, dict[str, float]]:
         """Weight vertices based on distance to bones"""
         # Creates an empty dict with the format {vertex_index: {bone_name: weight, ...}, ...}
@@ -293,7 +298,7 @@ class Algo:
                 weights[bone_name] /= total_weight
                 
         return vertex_weights
-        
+
 class GenerateCoords:
     reverse_bone_chain:bool
     
@@ -443,8 +448,7 @@ class GenerateCoords:
                 "bones":   {j:{"co":co, "name":None} for j, co in enumerate(coords)},
                 "indices":  {}} for i, coords in enumerate(coords_list)}
         return grp_islands
-    
-    
+
 @dataclass
 class ArmatureFuncs:
     armature_name:str
@@ -593,9 +597,10 @@ class ArmatureFuncs:
     @staticmethod
     def auto_weight(islands_grp:dict, arm_obj:object, mesh_obj:object, mix_mode:str = 'REPLACE') -> None:
         """
-        islands_grp:      {f"Island_{i}":{"bones":{j:{"co":Vector((0,0,0)),"name":"bonename"}, ...},"indices":[]}, ...}\n
-        temp_meshes:      {f"{i}":object, ...}\n
-        temp_armatures:   {f"{i}":object, ...}"""
+        islands_grp:      {f"Island_{i}":{"bones":{j:{"co":Vector((0,0,0)),"name":"bonename"}, ...},"indices":[]}, ...}
+        temp_meshes:      {f"{i}":object, ...}
+        temp_armatures:   {f"{i}":object, ...}
+        """
         # if debug: print("Armatures auto weight")
         def set_active_selected(obj:object) -> None:
             bpy.context.view_layer.objects.active = obj
@@ -603,8 +608,9 @@ class ArmatureFuncs:
         
         def sort_islands(isl:dict) -> dict:
             """
-            From: {f"Island_{i}":{"bones":{j:{"co":Vector((0,0,0)),"name":"bonename"}, ...},"indices":[]}, ...}\n
-            To:   {f"Island_{i}":{"bones":[], "indices":[]}, ...}\n"""
+            From: {f"Island_{i}":{"bones":{j:{"co":Vector((0,0,0)),"name":"bonename"}, ...},"indices":[]}, ...}
+            To:   {f"Island_{i}":{"bones":[], "indices":[]}, ...}
+            """
             isl_data = {}
             for key, value in isl.items():
                 bone_names = [*value["bones"].values()]
@@ -771,23 +777,23 @@ def get_armature_name():
     armature_name = get_name_type[arm_name_type]()
     return armature_name
 
-class CT_GenerateBonesMesh(bpy.types.Operator):
+class CT_OT_GenerateBonesMesh(Operator):
     bl_idname = "ct.generate_bones_mesh"
     bl_label = "Generate Bones"
     bl_description = "Generate bones from mesh selection"
     bl_options = {"REGISTER", "UNDO"}
     
-    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False)
-    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0)
-    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False)
+    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False) # type: ignore
+    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0) # type: ignore
+    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False) # type: ignore
     
-    apply_weights: bpy.props.BoolProperty(name='apply_weights', description='', default=False)
-    modulo: bpy.props.IntProperty(name='modulo', description='Skip Bones', default=0, subtype='NONE', min=0)
-    max_loops: bpy.props.IntProperty(name='max_loops', description='Max bones per island. (Increase when needed)', default=100, subtype='NONE', min=1, max=1000)
-    vert_sel: bpy.props.EnumProperty(name='vert_sel', description='', items=[('Face area', 'Face area', '', 0, 0), ('Linked edges', 'Linked edges', '', 0, 1)])
+    apply_weights: bpy.props.BoolProperty(name='apply_weights', description='', default=False) # type: ignore
+    modulo: bpy.props.IntProperty(name='modulo', description='Skip Bones', default=0, subtype='NONE', min=0) # type: ignore
+    max_loops: bpy.props.IntProperty(name='max_loops', description='Max bones per island. (Increase when needed)', default=100, subtype='NONE', min=1, max=1000) # type: ignore
+    vert_sel: bpy.props.EnumProperty(name='vert_sel', description='', items=[('Face area', 'Face area', '', 0, 0), ('Linked edges', 'Linked edges', '', 0, 1)]) # type: ignore
 
-    mix_mode: bpy.props.EnumProperty(name='mix_mode', description='', items=[('REPLACE', 'REPLACE', '', 0, 0), ('ADD', 'ADD', '', 0, 1)])
-    advanced_settings: bpy.props.BoolProperty(name='advanced_settings', description='', default=False)
+    mix_mode: bpy.props.EnumProperty(name='mix_mode', description='', items=[('REPLACE', 'REPLACE', '', 0, 0), ('ADD', 'ADD', '', 0, 1)]) # type: ignore
+    advanced_settings: bpy.props.BoolProperty(name='advanced_settings', description='', default=False) # type: ignore
     
     @classmethod
     def poll(cls, context):
@@ -892,15 +898,15 @@ class CT_GenerateBonesMesh(bpy.types.Operator):
                 return {"CANCELLED"}
         context.window_manager.invoke_props_popup(self, event)
         return self.execute(context)
-    
-class CT_GenerateBonesCurves(bpy.types.Operator):
+
+class CT_OT_GenerateBonesCurves(Operator):
     bl_idname = "ct.generate_bones_curves"
     bl_label = "Generate Bones"
     bl_description = "Generate bones from curves"
     bl_options = {"REGISTER", "UNDO"}
-    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False)
-    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0)
-    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False)
+    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False) # type: ignore
+    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0) # type: ignore
+    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False) # type: ignore
 
     @classmethod
     def poll(cls, context):
@@ -958,23 +964,23 @@ class CT_GenerateBonesCurves(bpy.types.Operator):
         context.window_manager.invoke_props_popup(self, event)
         return self.execute(context)
 
-class CT_GenerateBonesIslands(bpy.types.Operator):
+class CT_OT_GenerateBonesIslands(Operator):
     bl_idname = "ct.generate_bones_islands"
     bl_label = "Generate Bones"
     bl_description = "Generate bones from mesh islands"
     bl_options = {"REGISTER", "UNDO"}
     
-    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False)
-    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0)
-    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False)
+    reverse: bpy.props.BoolProperty(name='reverse', description='', default=False) # type: ignore
+    resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0) # type: ignore
+    resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False) # type: ignore
     
-    apply_weights: bpy.props.BoolProperty(name='apply_weights', description='', default=False)
-    modulo: bpy.props.IntProperty(name='modulo', description='Skip Bones', default=0, subtype='NONE', min=0)
-    max_loops: bpy.props.IntProperty(name='max_loops', description='Max bones per island. (Increase when needed)', default=100, subtype='NONE', min=1, max=1000)
-    vert_sel: bpy.props.EnumProperty(name='vert_sel', description='', items=[('Face area', 'Face area', '', 0, 0), ('Linked edges', 'Linked edges', '', 0, 1)])
+    apply_weights: bpy.props.BoolProperty(name='apply_weights', description='', default=False) # type: ignore
+    modulo: bpy.props.IntProperty(name='modulo', description='Skip Bones', default=0, subtype='NONE', min=0) # type: ignore
+    max_loops: bpy.props.IntProperty(name='max_loops', description='Max bones per island. (Increase when needed)', default=100, subtype='NONE', min=1, max=1000) # type: ignore
+    vert_sel: bpy.props.EnumProperty(name='vert_sel', description='', items=[('Face area', 'Face area', '', 0, 0), ('Linked edges', 'Linked edges', '', 0, 1)]) # type: ignore
 
-    mix_mode: bpy.props.EnumProperty(name='mix_mode', description='', items=[('REPLACE', 'REPLACE', '', 0, 0), ('ADD', 'ADD', '', 0, 1)])
-    advanced_settings: bpy.props.BoolProperty(name='advanced_settings', description='', default=False)
+    mix_mode: bpy.props.EnumProperty(name='mix_mode', description='', items=[('REPLACE', 'REPLACE', '', 0, 0), ('ADD', 'ADD', '', 0, 1)]) # type: ignore
+    advanced_settings: bpy.props.BoolProperty(name='advanced_settings', description='', default=False) # type: ignore
     
     @classmethod
     def poll(cls, context):
@@ -1079,14 +1085,89 @@ class CT_GenerateBonesIslands(bpy.types.Operator):
         context.window_manager.invoke_props_popup(self, event)
         return self.execute(context)
 
+class CT_OT_MergeSharpen(Operator):
+    bl_idname = "ct.merge_sharpen"
+    bl_label = "Merge and Sharpen"
+    bl_description = "Remove doubles & sharpen"
+    bl_options = {"REGISTER", "UNDO"}
+    
+    sharpen: bpy.props.BoolProperty(name='sharpen', description='', default=True) # type: ignore
+    threshold: bpy.props.FloatProperty(name='threshold', description='', default=0.00001, min=0.0, step=3, precision=6) # type: ignore
+
+    def execute(self, context):
+        obj = bpy.context.object
+        assert obj.type == 'MESH', "Object must be a mesh"
+        mode = 'EDIT'
+        if bpy.context.mode == 'OBJECT': 
+            bpy.ops.object.mode_set(mode='EDIT')
+            mode = 'OBJECT'
+        assert bpy.context.mode == 'EDIT_MESH', "Expected object to be in edit mode"
+        
+        if self.sharpen:
+            bpy.ops.mesh.select_all(action='SELECT')
+            bpy.ops.mesh.region_to_loop()
+            bpy.ops.mesh.mark_sharp()
+            obj.data.use_auto_smooth = True
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.mesh.remove_doubles(threshold=self.threshold)
+        bpy.ops.mesh.select_all(action='DESELECT')
+
+        if mode == 'OBJECT': bpy.ops.object.mode_set(mode='OBJECT')
+        return {"FINISHED"}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, 'sna_threshold', text='Merge Threshold', icon_value=0, emboss=True)
+
+    def invoke(self, context, event):
+        context.window_manager.invoke_props_popup(self, event)
+        return self.execute(context)
+
+
+generate_operators = (
+    CT_OT_GenerateBonesMesh,
+    CT_OT_GenerateBonesCurves,
+    CT_OT_GenerateBonesIslands,
+    CT_OT_MergeSharpen
+)
+
+ct_at_properties = {
+    "ct_at_armature_gen_type": bpy.props.EnumProperty(
+            name="Generate Type",
+            description="Choose how to generate the armature",
+            items=[('Auto', 'Auto', 'Auto generate armature', 0), 
+                   ('Custom', 'Custom', 'Custom armature name', 1), 
+                   ('Existing', 'Existing', 'Use existing armature', 2)]),
+    
+    "ct_at_menu_item": bpy.props.EnumProperty(
+        name='MenuEnum', 
+        description='Select menu item',
+        items=[('Generate bones', 'Generate bones', '', 172, 0), 
+               ('Edit bones', 'Edit bones', '', 174, 1), 
+               ('Settings', 'Settings', '', 117, 2),
+            #    ('Edit Weights', 'Edit Weights', '', 475, 2), 
+               ]),
+    
+    "ct_at_menu_style": bpy.props.BoolProperty(name='MenuStyle', description='', default=False),
+    "ct_at_existing_armature": bpy.props.PointerProperty(name='Existing Armature', description='', type=bpy.types.Scene),
+    "ct_at_armature_name": bpy.props.StringProperty(name='Armature Name', description='', default='Armature', subtype='NONE', maxlen=0),
+    "ct_at_bone_name": bpy.props.StringProperty(name='Bone Name', description='', default='bone', subtype='NONE', maxlen=0),
+    "ct_at_weightpaint": bpy.props.BoolProperty(name='WeightPaint', description='', default=False),
+    "ct_at_sharpen": bpy.props.BoolProperty(name='Sharpen', description='', default=True)
+}
+
 
 def register():
-    bpy.utils.register_class(CT_GenerateBonesCurves)
-    bpy.utils.register_class(CT_GenerateBonesMesh)
-    bpy.utils.register_class(CT_GenerateBonesIslands)
+    for op in generate_operators:
+        bpy.utils.register_class(op)
+    
+    for prop in ct_at_properties:
+        exec(f"bpy.types.Scene.{prop} = ct_at_properties[prop]")
 
 def unregister():
-    bpy.utils.unregister_class(CT_GenerateBonesCurves)
-    bpy.utils.unregister_class(CT_GenerateBonesMesh)
-    bpy.utils.unregister_class(CT_GenerateBonesIslands)
+    for op in generate_operators:
+        bpy.utils.unregister_class(op)
+    
 
+    for prop in ct_at_properties:
+        exec(f"del bpy.types.Scene.{prop}")
