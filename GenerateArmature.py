@@ -75,6 +75,16 @@ def popup_window(title:str = "Error", text:str|list = "Error message", icon:str 
             row.label(text=line)
     bpy.context.window_manager.popup_menu(popup, title=title, icon=icon) 
 
+def string_to_int(value):
+    if value.isdigit():
+        return int(value)
+    return 0
+
+def string_to_icon(value):
+    if value in bpy.types.UILayout.bl_rna.functions["prop"].parameters["icon"].enum_items.keys():
+        return bpy.types.UILayout.bl_rna.functions["prop"].parameters["icon"].enum_items[value].value
+    return string_to_int(value)
+
 class Capturing(list):
     """Capture stdout as a list to capture errors when running multiple operators"""
     #https://stackoverflow.com/a/16571630
@@ -821,38 +831,37 @@ class CT_OT_GenerateBonesMesh(Operator):
         col.scale_x = 1.20
         col.scale_y = 1.20
         row_reverse = col.row(heading='', align=True)
-        row_reverse.prop(self, 'reverse', text='', icon_value=(36 if self.reverse else 38), emboss=True)
+        row_reverse.prop(self, 'reverse', text='', icon_value=(string_to_icon('CHECKMARK') if self.reverse else string_to_icon('CHECKBOX_DEHLT') ), emboss=True)
         box_rev = row_reverse.box()
         box_rev.scale_x = 1.0
         box_rev.scale_y = 0.63
-        box_rev.label(text='Reverse', icon_value=715)
+        box_rev.label(text='Reverse', icon_value=string_to_icon('LOOP_BACK'))
         row_resample = col.row(heading='', align=True)
-        row_resample.prop(self, 'resample_on', text='', icon_value=(39 if self.resample_on else 38), emboss=True)
+        row_resample.prop(self, 'resample_on', text='', icon_value=(string_to_icon('CHECKBOX_HLT')  if self.resample_on else string_to_icon('CHECKBOX_DEHLT') ), emboss=True)
         box_3C89A = row_resample.box()
         box_3C89A.scale_x = 1.0
         box_3C89A.scale_y = 0.63
-        box_3C89A.label(text='Resample', icon_value=16)
+        box_3C89A.label(text='Resample', icon_value=string_to_icon('GRIP'))
         row_8E3B7 = row_resample.row(heading='', align=True)
         row_8E3B7.enabled = self.resample_on
-        row_8E3B7.prop(self, 'resample', text='', icon_value=0, emboss=True)
+        row_8E3B7.prop(self, 'resample', text='', emboss=True)
 
         # Mesh
         col_8DE44 = col.column(heading='', align=True)
         row_66FE3 = col_8DE44.row(heading='', align=True)
-        row_66FE3.prop(self, 'apply_weights', text='', icon_value=(36 if self.apply_weights else 38), emboss=True)
+        row_66FE3.prop(self, 'apply_weights', text='', icon_value=(string_to_icon('CHECKMARK') if self.apply_weights else string_to_icon('CHECKBOX_DEHLT') ), emboss=True)
         row_C7688 = row_66FE3.row(heading='', align=True)
         box_79147 = row_C7688.box()
         box_79147.scale_x = 1.0
         box_79147.scale_y = 0.63
-        box_79147.label(text='Apply weights', icon_value=475)
-        row_C7688.prop(self, 'mix_mode', text='', icon_value=0, emboss=True)
+        box_79147.label(text='Apply weights', icon_value=string_to_icon('MOD_VERTEX_WEIGHT'))
+        row_C7688.prop(self, 'mix_mode', text='', emboss=True)
         
-        if 'ctools_armature' in bpy.context.preferences.addons:
-            advanced_settings = bpy.context.preferences.addons['ctools_armature'].preferences.sna_advanced_settings
-        elif bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings:
-            advanced_settings = bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings
-        else:
-            advanced_settings = False
+        try:
+            advanced_settings = bpy.context.preferences.addons[__package__].preferences.sna_advanced_settings
+        except:
+            advanced_settings = True
+            pass
         
         if advanced_settings:
             col_E2B81 = col_8DE44.column(heading='', align=True)
@@ -865,8 +874,8 @@ class CT_OT_GenerateBonesMesh(Operator):
                 box_9F073 = row_27CC4.box()
                 box_9F073.scale_x = 1.0
                 box_9F073.scale_y = 0.63
-                box_9F073.label(text='Start vertex algorithm', icon_value=0)
-                row_27CC4.prop(self, 'sna_mesh_vert_sel', text='', icon_value=0, emboss=True)
+                box_9F073.label(text='Start vertex algorithm')
+                row_27CC4.prop(self, 'sna_mesh_vert_sel', text='', emboss=True)
                 
             row_A61CC = col_E2B81.row(heading='', align=True)
             row_A61CC.scale_x = 1.0
@@ -874,14 +883,14 @@ class CT_OT_GenerateBonesMesh(Operator):
             box_36178 = row_A61CC.box()
             box_36178.scale_x = 1.0
             box_36178.scale_y = 0.63
-            box_36178.label(text='Modulo', icon_value=0)
-            row_A61CC.prop(self, 'modulo', text='', icon_value=0, emboss=True)
+            box_36178.label(text='Modulo')
+            row_A61CC.prop(self, 'modulo', text='', emboss=True)
             row_F4484 = col_E2B81.row(heading='', align=True)
             box_C0076 = row_F4484.box()
             box_C0076.scale_x = 1.0
             box_C0076.scale_y = 0.63
-            box_C0076.label(text='Max length', icon_value=0)
-            row_F4484.prop(self, 'max_loops', text='', icon_value=0, emboss=True)
+            box_C0076.label(text='Max length')
+            row_F4484.prop(self, 'max_loops', text='', emboss=True)
 
     def invoke(self, context, event):
         obj = bpy.context.object
@@ -933,18 +942,18 @@ class CT_OT_GenerateBonesCurves(Operator):
         col_2D2FB.scale_y = 1.20
         
         row_D6B39 = col_2D2FB.row(align=True)
-        row_D6B39.prop(self, 'reverse', text='', icon_value=36 if self.reverse else 38)
+        row_D6B39.prop(self, 'reverse', text='', icon_value=string_to_icon('CHECKMARK') if self.reverse else string_to_icon('CHECKBOX_DEHLT') )
         box_FE569 = row_D6B39.box()
         box_FE569.scale_x = 1.0
         box_FE569.scale_y = 0.63
-        box_FE569.label(text='Reverse', icon_value=715)
+        box_FE569.label(text='Reverse', icon_value=string_to_icon('LOOP_BACK'))
         
         row_20AB8 = col_2D2FB.row(align=True)
-        row_20AB8.prop(self, 'resample_on', text='', icon_value=39 if self.resample_on else 38)
+        row_20AB8.prop(self, 'resample_on', text='', icon_value=string_to_icon('CHECKBOX_HLT')  if self.resample_on else string_to_icon('CHECKBOX_DEHLT') )
         box_9D78D = row_20AB8.box()
         box_9D78D.scale_x = 1.0
         box_9D78D.scale_y = 0.63
-        box_9D78D.label(text='Resample', icon_value=16)
+        box_9D78D.label(text='Resample', icon_value=string_to_icon('GRIP'))
         row_16A4B = row_20AB8.row(align=True)
         row_16A4B.enabled = self.resample_on
         row_16A4B.prop(self, 'resample', text='')
@@ -1007,38 +1016,37 @@ class CT_OT_GenerateBonesIslands(Operator):
         col.scale_x = 1.20
         col.scale_y = 1.20
         row_reverse = col.row(heading='', align=True)
-        row_reverse.prop(self, 'reverse', text='', icon_value=(36 if self.reverse else 38), emboss=True)
+        row_reverse.prop(self, 'reverse', text='', icon_value=(string_to_icon('CHECKMARK') if self.reverse else string_to_icon('CHECKBOX_DEHLT') ), emboss=True)
         box_rev = row_reverse.box()
         box_rev.scale_x = 1.0
         box_rev.scale_y = 0.63
-        box_rev.label(text='Reverse', icon_value=715)
+        box_rev.label(text='Reverse', icon_value=string_to_icon('LOOP_BACK'))
         row_resample = col.row(heading='', align=True)
-        row_resample.prop(self, 'resample_on', text='', icon_value=(39 if self.resample_on else 38), emboss=True)
+        row_resample.prop(self, 'resample_on', text='', icon_value=(string_to_icon('CHECKBOX_HLT')  if self.resample_on else string_to_icon('CHECKBOX_DEHLT') ), emboss=True)
         box_3C89A = row_resample.box()
         box_3C89A.scale_x = 1.0
         box_3C89A.scale_y = 0.63
-        box_3C89A.label(text='Resample', icon_value=16)
+        box_3C89A.label(text='Resample', icon_value=string_to_icon('GRIP'))
         row_8E3B7 = row_resample.row(heading='', align=True)
         row_8E3B7.enabled = self.resample_on
-        row_8E3B7.prop(self, 'resample', text='', icon_value=0, emboss=True)
+        row_8E3B7.prop(self, 'resample', text='', emboss=True)
 
         # Mesh
         col_8DE44 = col.column(heading='', align=True)
         row_66FE3 = col_8DE44.row(heading='', align=True)
-        row_66FE3.prop(self, 'apply_weights', text='', icon_value=(36 if self.apply_weights else 38), emboss=True)
+        row_66FE3.prop(self, 'apply_weights', text='', icon_value=(string_to_icon('CHECKMARK') if self.apply_weights else string_to_icon('CHECKBOX_DEHLT') ), emboss=True)
         row_C7688 = row_66FE3.row(heading='', align=True)
         box_79147 = row_C7688.box()
         box_79147.scale_x = 1.0
         box_79147.scale_y = 0.63
-        box_79147.label(text='Apply weights', icon_value=475)
-        row_C7688.prop(self, 'mix_mode', text='', icon_value=0, emboss=True)
+        box_79147.label(text='Apply weights', icon_value=string_to_icon('MOD_VERTEX_WEIGHT'))
+        row_C7688.prop(self, 'mix_mode', text='', emboss=True)
         
-        if 'ctools_armature' in bpy.context.preferences.addons:
-            advanced_settings = bpy.context.preferences.addons['ctools_armature'].preferences.sna_advanced_settings
-        elif bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings:
-            advanced_settings = bpy.context.scene.sna_addon_prefs_temp.sna_advanced_settings
-        else:
-            advanced_settings = False
+        try:
+            advanced_settings = bpy.context.preferences.addons[__package__].preferences.sna_advanced_settings
+        except:
+            advanced_settings = True
+            pass
         
         if advanced_settings:
             col_E2B81 = col_8DE44.column(heading='', align=True)
@@ -1051,8 +1059,8 @@ class CT_OT_GenerateBonesIslands(Operator):
                 box_9F073 = row_27CC4.box()
                 box_9F073.scale_x = 1.0
                 box_9F073.scale_y = 0.63
-                box_9F073.label(text='Start vertex algorithm', icon_value=0)
-                row_27CC4.prop(self, 'vert_sel', text='', icon_value=0, emboss=True)
+                box_9F073.label(text='Start vertex algorithm')
+                row_27CC4.prop(self, 'vert_sel', text='', emboss=True)
                 
             row_A61CC = col_E2B81.row(heading='', align=True)
             row_A61CC.scale_x = 1.0
@@ -1060,14 +1068,14 @@ class CT_OT_GenerateBonesIslands(Operator):
             box_36178 = row_A61CC.box()
             box_36178.scale_x = 1.0
             box_36178.scale_y = 0.63
-            box_36178.label(text='Modulo', icon_value=0)
-            row_A61CC.prop(self, 'modulo', text='', icon_value=0, emboss=True)
+            box_36178.label(text='Modulo')
+            row_A61CC.prop(self, 'modulo', text='', emboss=True)
             row_F4484 = col_E2B81.row(heading='', align=True)
             box_C0076 = row_F4484.box()
             box_C0076.scale_x = 1.0
             box_C0076.scale_y = 0.63
-            box_C0076.label(text='Max length', icon_value=0)
-            row_F4484.prop(self, 'max_loops', text='', icon_value=0, emboss=True)
+            box_C0076.label(text='Max length')
+            row_F4484.prop(self, 'max_loops', text='', emboss=True)
 
     def invoke(self, context, event):
         obj = bpy.context.object
@@ -1117,7 +1125,7 @@ class CT_OT_MergeSharpen(Operator):
 
     def draw(self, context):
         layout = self.layout
-        layout.prop(self, 'sna_threshold', text='Merge Threshold', icon_value=0, emboss=True)
+        layout.prop(self, 'sna_threshold', text='Merge Threshold', emboss=True)
 
     def invoke(self, context, event):
         context.window_manager.invoke_props_popup(self, event)
@@ -1128,7 +1136,7 @@ generate_operators = (
     CT_OT_GenerateBonesMesh,
     CT_OT_GenerateBonesCurves,
     CT_OT_GenerateBonesIslands,
-    CT_OT_MergeSharpen
+    CT_OT_MergeSharpen,
 )
 
 ct_at_properties = {
