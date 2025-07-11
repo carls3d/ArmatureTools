@@ -15,6 +15,9 @@ class ddict(defaultdict):
 #todo         1. Get meshes with weights, separate and run "auto weights" in GenerateArmature
 #todo         2. Make weight paint algorithm
 
+#FIXME - Error removing bone, transferring weights to a bone that is not in the meshes vertex groups
+#FIXME - Fix for Dissolve when bones are not connected
+
 #NOTE Naming conventions:
 #note EditFuncs - common operations 
 #note editbones - functions for editing bones and transferring weights
@@ -1283,7 +1286,6 @@ class CT_OT_SetPaintMode(bpy.types.Operator):
         ArmatureMode.set_mode_auto(self.set_mode, arm_obj, mesh_obj, self.extend)
         return {"FINISHED"}
 
-# TODO ----
 class CT_OT_RenameBonesRecursive(bpy.types.Operator):
     bl_idname = "ct.rename_bones_recursive"
     bl_label = "Rename Bones Recursive"
@@ -1299,48 +1301,66 @@ class CT_OT_RenameBonesRecursive(bpy.types.Operator):
         armature:bpy.types.Armature = bpy.context.object.data if bpy.context.object.type == 'ARMATURE' else None
         
         # Check if armature pointer is valid
-        
         assert armature, "No armature found"
         assert armature.bones, "No bones found"
         
+        root_bones = set()
         root_bone = None
         match bpy.context.mode:
             case 'EDIT_ARMATURE':
                 root_bone = bpy.context.active_bone
+                for bone in bpy.context.selected_bones:
+                    if bone.parent not in bpy.context.selected_bones:
+                        root_bones.add(bone)
             case 'POSE':
-                root_bone = bpy.context.active_bone
+                root_bone = bpy.context.active_pose_bone
+                for bone in bpy.context.selected_pose_bones:
+                    if bone.parent not in bpy.context.selected_pose_bones:
+                        root_bones.add(bone)
             case 'OBJECT':
                 root_bone = armature.bones.get(self.root_bone, armature.bones[0])
             case _:
                 assert False, "Invalid mode"
-        
         assert root_bone, "No bone selected"
 
-        #root_bone.name = '_temp_name'
-        for bone in [root_bone, *root_bone.children_recursive]:
-            bone.name = '_temp_name'
-        self.rename_children_recursive(root_bone, base_name=self.new_name, root_prefix=self.root_prefix, suffix=self.suffix)
+        # Clear name before renaming to prevent name conflicts
+        if len(root_bones) >= 2:
+            for bone in root_bones:
+                bone.name = '_temp_name'
+                for child in bone.children_recursive:
+                    child.name = '_temp_name'
+            for i, bone in enumerate(root_bones):
+                child_index = f"{i}"
+                if self.root_prefix:
+                    bone.name = f"{self.new_name}{self.root_prefix}{i}{self.suffix}"
+                else:
+                    f"{self.new_name}{i}{self.suffix}.{0:03d}"
+                self.rename_children_recursive(bone, base_name=self.new_name, child_index=child_index, recursive_index=1, suffix=self.suffix)
+        elif root_bone:
+            for bone in root_bones:
+                bone.name = '_temp_name'
+                for child in bone.children_recursive:
+                    child.name = '_temp_name'
+            self.rename_children_recursive(root_bone, base_name=self.new_name, root_prefix=self.root_prefix, suffix=self.suffix)
         return {"FINISHED"}
     
     def rename_children_recursive(self, bone, base_name="Bone", child_index="", recursive_index=0, start_branch_at_zero=True, root_prefix="Root", suffix=""):
         def create_name(_base_name, _child_index, _recursive_index, _suffix):
             """
             Root
-                bone1_000 | ("bone", "1", "0")
-                    bone1.1_001 | ("bone", "1.1", "1")
-                    bone1.1_002 | ("bone", "1.1", "2")
-                    
-                    bone1.2_001 | ("bone", "1.2", "1")
-                    bone1.2_002 | ("bone", "1.2", "2")
+                bone1_suffix.000 | ("bone", "1", "0")
+                    bone1.1_suffix.001 | ("bone", "1.1", "1")
+                        bone1.1_suffix.002 | ("bone", "1.1", "2")
+                    bone1.2_suffix.001 | ("bone", "1.2", "1")
+                        bone1.2_suffix.002 | ("bone", "1.2", "2")
             
-                bone2_000 | ("bone", "2", "0")
-                    bone2_001 | ("bone", "2", "1") 
-                    bone2_002 | ("bone", "2", "2")
+                bone2_suffix.000 | ("bone", "2", "0")
+                    bone2_suffix.001 | ("bone", "2", "1") 
+                    bone2_suffix.002 | ("bone", "2", "2")
             """
-            #return f"{base_name}{child_index}_{recursive_index:03d}"
-            return f"{_base_name}{'_' if _child_index else ''}{_child_index}.{_recursive_index:03d}{_suffix}"
+            return f"{_base_name}{_child_index}{_suffix}.{_recursive_index:03d}"
         if not recursive_index:
-            bone.name = base_name + "_" + root_prefix if root_prefix else f"{base_name}.{recursive_index:03d}{suffix}"
+            bone.name = base_name + root_prefix if root_prefix else f"{base_name}{suffix}.{recursive_index:03d}"
             if not root_prefix: recursive_index += 1
         
         branch = len(bone.children) > 1
@@ -1353,7 +1373,7 @@ class CT_OT_RenameBonesRecursive(bpy.types.Operator):
             
             child.name = create_name(base_name, new_child_index, recursive_index, suffix)
             self.rename_children_recursive(child, base_name=base_name, child_index=new_child_index, recursive_index=recursive_index+1, suffix=suffix)
-
+        return
 
 edit_operators = [
     CT_OT_SetPaintMode,
