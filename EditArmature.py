@@ -927,7 +927,10 @@ class ArmatureMode:
         
         # Set mode
         bpy.ops.paint.weight_paint_toggle()
-        bpy.ops.wm.tool_set_by_id(name="builtin.move" if select else "builtin_brush.Draw")
+        builtin_brush_name = "builtin.brush"
+        if bpy.app.version < (4, 3, 0):
+            builtin_brush_name = "builtin_brush.Draw"
+        bpy.ops.wm.tool_set_by_id(name="builtin.move" if select else builtin_brush_name)
         
     @staticmethod
     def mesh_object(_, mesh_obj:bpy.types.Object, extend:bool = False) -> None:
@@ -1332,9 +1335,9 @@ class CT_OT_RenameBonesRecursive(bpy.types.Operator):
             for i, bone in enumerate(root_bones):
                 child_index = f"{i}"
                 if self.root_prefix:
-                    bone.name = f"{self.new_name}{self.root_prefix}{i}{self.suffix}"
+                    bone.name = f"{self.new_name}{self.root_prefix}_{i}{self.suffix}"
                 else:
-                    f"{self.new_name}{i}{self.suffix}.{0:03d}"
+                    bone.name = f"{self.new_name}_{i}{self.suffix}.{0:03d}"
                 self.rename_children_recursive(bone, base_name=self.new_name, child_index=child_index, recursive_index=1, suffix=self.suffix)
         elif root_bone:
             for bone in root_bones:
@@ -1345,6 +1348,7 @@ class CT_OT_RenameBonesRecursive(bpy.types.Operator):
         return {"FINISHED"}
     
     def rename_children_recursive(self, bone, base_name="Bone", child_index="", recursive_index=0, start_branch_at_zero=True, root_prefix="Root", suffix=""):
+        # <prefix>_<siblingIndex:00>_<childIndex:00>_…_<depthIndex:00>
         def create_name(_base_name, _child_index, _recursive_index, _suffix):
             """
             Root
@@ -1369,7 +1373,7 @@ class CT_OT_RenameBonesRecursive(bpy.types.Operator):
         for i, child in enumerate(bone.children):
             if branch:
                 if not start_branch_at_zero: i += 1
-                new_child_index = f"{child_index}_{i}" if child_index else f"{i}"
+                new_child_index = f"{child_index}_{i}" if child_index else f"_{i}"
             
             child.name = create_name(base_name, new_child_index, recursive_index, suffix)
             self.rename_children_recursive(child, base_name=base_name, child_index=new_child_index, recursive_index=recursive_index+1, suffix=suffix)
