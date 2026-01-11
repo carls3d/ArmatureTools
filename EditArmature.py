@@ -116,10 +116,8 @@ def interactive_popup(title:str = "Title", content:dict = {"Title":{"type":"labe
         }
     }"""
     
-    def popup(self, context):
+    def popup(self:bpy.types.Operator, context):
         # Each element in text is a line in the popup window
-        self:bpy.types.Operator
-        # <class '__main__.SNA_OT_Testop_E2553'>
         item:dict
         for text, item in content.items():
             item.setdefault("icon", "NONE")
@@ -184,7 +182,9 @@ class EditFuncs:
         valid_armatures = lambda mesh_obj: [mod.object for mod in mesh_obj.modifiers if mod.type == 'ARMATURE' and mod.object] # All armatures connected to mesh object
         arm_condition = lambda arm_obj: [ob for ob in bpy.data.objects if [mod for mod in ob.modifiers if mod.type == 'ARMATURE' and mod.object == arm_obj]] # All mesh objects connected to armature object
         selected_condition = lambda valid_objs: [ob for ob in bpy.context.selected_objects if ob != obj and ob in valid_objs] # All selected objects that are in 'valid objects'
-        
+        active_bone:bpy.types.Bone
+        sel_bones:list[bpy.types.Bone]
+        armatures:list[bpy.types.Object]
         
         if mode == 'PAINT_WEIGHT':
             pose_bone = bpy.context.active_pose_bone
@@ -208,7 +208,13 @@ class EditFuncs:
     @staticmethod
     def set_active_bone(bone:object) -> None:
         """Set active bone and vertex group"""
-        bone.select = True
+        if bpy.app.version < (5, 0, 0):
+            bone.select = True
+        else:
+            if bpy.context.pose_object:
+                bpy.context.pose_object.pose.bones[bone.name].select = True
+            elif bpy.context.edit_object and bpy.context.edit_object.type == 'ARMATURE':
+                bpy.context.edit_object.data.edit_bones[bone.name].select = True
         bone.id_data.bones.active = bone
         if bpy.context.mode == 'PAINT_WEIGHT':
             obj = bpy.context.object
