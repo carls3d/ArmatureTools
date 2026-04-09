@@ -80,10 +80,12 @@ def string_to_int(value):
         return int(value)
     return 0
 
+_icon_cache = {}
 def string_to_icon(value):
-    if value in bpy.types.UILayout.bl_rna.functions["prop"].parameters["icon"].enum_items.keys():
-        return bpy.types.UILayout.bl_rna.functions["prop"].parameters["icon"].enum_items[value].value
-    return string_to_int(value)
+    if value not in _icon_cache:
+        items = bpy.types.UILayout.bl_rna.functions["prop"].parameters["icon"].enum_items
+        _icon_cache[value] = items[value].value if value in items else string_to_int(value)
+    return _icon_cache[value]
 
 class Capturing(list):
     """Capture stdout as a list to capture errors when running multiple operators"""
@@ -446,10 +448,15 @@ class GenerateCoords:
             bpy.ops.object.select_all(action='DESELECT')
             _temp.select_set(True)
             bpy.ops.object.convert(target='MESH')
+            # Store the intermediate mesh data block so we can clean it up
+            _temp_mesh_data = _temp.data
             bpy.ops.object.convert(target='CURVE')
             splines = _temp.data.splines
             coords_list = [[p.co.to_3d() for p in spline.points] for spline in splines]
             # indices = [[p.index for p in spline.points] for spline in splines]
+            # Clean up the intermediate mesh data block (orphaned by the second convert)
+            if _temp_mesh_data and _temp_mesh_data.users == 0:
+                bpy.data.meshes.remove(_temp_mesh_data)
             bpy.data.curves.remove(_temp.data)
             
         if resample: coords_list = [Algo.resample_coords(coords, resample) for coords in coords_list]
@@ -689,6 +696,10 @@ class ArmatureFuncs:
             meshes = temp_meshes()
             armatures = temp_armatures()
             
+            # Collect data blocks before join so we can clean up orphans after
+            mesh_data_blocks = {m.data for m in meshes.values() if m.data}
+            arm_data_blocks = {a.data for a in armatures.values() if a.data}
+            
             # report({'INFO'}, "Applying auto weights")
             with Capturing() as output:                         # Capture error outputs from console
                 for i, armature in enumerate(armatures.values()):
@@ -715,6 +726,15 @@ class ArmatureFuncs:
                 set_active_selected(mesh_obj)
                 for mesh in meshes.values(): mesh.select_set(True)
                 bpy.ops.object.join()
+            
+            # Clean up orphaned data blocks left behind by join operations
+            for block in mesh_data_blocks:
+                if block and block.users == 0:
+                    bpy.data.meshes.remove(block)
+            for block in arm_data_blocks:
+                if block and block.users == 0:
+                    bpy.data.armatures.remove(block)
+            
             # if not output: 
                 # report({'INFO'}, "Auto weights applied")
             return output
@@ -1157,7 +1177,7 @@ ct_at_properties = {
                ]),
     
     "ct_at_menu_style": bpy.props.BoolProperty(name='MenuStyle', description='', default=False),
-    "ct_at_existing_armature": bpy.props.PointerProperty(name='Existing Armature', description='', type=bpy.types.Scene),
+    "ct_at_existing_armature": bpy.props.PointerProperty(name='Existing Armature', description='', type=bpy.types.Object),
     "ct_at_armature_name": bpy.props.StringProperty(name='Armature Name', description='', default='Armature', subtype='NONE', maxlen=0),
     "ct_at_bone_name": bpy.props.StringProperty(name='Bone Name', description='', default='bone', subtype='NONE', maxlen=0),
     "ct_at_weightpaint": bpy.props.BoolProperty(name='WeightPaint', description='', default=False),
