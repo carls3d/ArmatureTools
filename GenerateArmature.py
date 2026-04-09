@@ -315,9 +315,10 @@ class GenerateCoords:
     reverse_bone_chain:bool
     
     @staticmethod
-    def init_generate(armature_name:str, bone_name:str):
-        obj = bpy.context.object
-        mode = bpy.context.object.mode
+    def init_generate(armature_name:str, bone_name:str, obj:bpy.types.Object=None):
+        if obj is None:
+            obj = bpy.context.object
+        mode = obj.mode
         if not obj:
             return popup_window(text="No active object")
         if not obj.visible_get():
@@ -777,12 +778,13 @@ class ArmatureFuncs:
 
 #----------------------------------------------------------------
 
-def get_armature_name():
+def get_armature_name(obj=None):
     def armature_name_auto():
         if valid_armatures:
             return valid_armatures[0].name
         else:
-            return bpy.context.object.name + '_rig'
+            source = obj or bpy.context.object
+            return source.name + '_rig'
         
     def armature_name_custom():
         if 'sna_armature_name' in bpy.context.scene and bpy.context.scene.sna_armature_name:
@@ -812,7 +814,9 @@ class CT_OT_GenerateBonesMesh(Operator):
     bl_label = "Generate Bones"
     bl_description = "Generate bones from mesh selection"
     bl_options = {"REGISTER", "UNDO"}
-    
+
+    source_obj: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+    source_mode: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
     reverse: bpy.props.BoolProperty(name='reverse', description='', default=False) # type: ignore
     resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0) # type: ignore
     resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False) # type: ignore
@@ -833,16 +837,22 @@ class CT_OT_GenerateBonesMesh(Operator):
         return True
 
     def execute(self, context):
-        armature_name = get_armature_name()
+        if not self.source_obj or self.source_obj not in bpy.data.objects:
+            self.report({'ERROR'}, message='Source object not found')
+            return {"CANCELLED"}
+        obj = bpy.data.objects[self.source_obj]
+        obj_mode = self.source_mode or obj.mode
+        context.view_layer.update()
+        armature_name = get_armature_name(obj)
         bone_name = bpy.context.scene.sna_bone_name if 'sna_bone_name' in bpy.context.scene else 'bone'
         self.resample = self.resample if self.resample_on else 0
-        
-        obj, obj_mode, arm = GenerateCoords.init_generate(armature_name, bone_name)
+
+        _, _, arm = GenerateCoords.init_generate(armature_name, bone_name, obj)
         islands_dict = GenerateCoords.from_mesh(obj, obj_mode, self.resample, self.modulo, self.max_loops, self.vert_sel)
         arm.generate_bones(islands_dict, self.reverse)
-        if self.apply_weights: 
+        if self.apply_weights:
             ArmatureFuncs.auto_weight(islands_dict, arm.armature, obj, self.mix_mode)
-       
+
         return {"FINISHED"}
 
     def draw(self, context):
@@ -925,6 +935,8 @@ class CT_OT_GenerateBonesMesh(Operator):
             if not obj.data.total_vert_sel:
                 self.report({'ERROR'}, message='No vertices selected')
                 return {"CANCELLED"}
+        self.source_obj = obj.name
+        self.source_mode = obj.mode
         context.window_manager.invoke_props_popup(self, event)
         return self.execute(context)
 
@@ -933,6 +945,7 @@ class CT_OT_GenerateBonesCurves(Operator):
     bl_label = "Generate Bones"
     bl_description = "Generate bones from curves"
     bl_options = {"REGISTER", "UNDO"}
+    source_obj: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
     reverse: bpy.props.BoolProperty(name='reverse', description='', default=False) # type: ignore
     resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0) # type: ignore
     resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False) # type: ignore
@@ -945,14 +958,19 @@ class CT_OT_GenerateBonesCurves(Operator):
         return True
 
     def execute(self, context):
-        armature_name = get_armature_name()
+        if not self.source_obj or self.source_obj not in bpy.data.objects:
+            self.report({'ERROR'}, message='Source object not found')
+            return {"CANCELLED"}
+        obj = bpy.data.objects[self.source_obj]
+        context.view_layer.update()
+        armature_name = get_armature_name(obj)
         bone_name = bpy.context.scene.sna_bone_name if 'sna_bone_name' in bpy.context.scene else 'bone'
         self.resample = self.resample if self.resample_on else 0
-        
-        obj, _, arm = GenerateCoords.init_generate(armature_name, bone_name)
+
+        _, _, arm = GenerateCoords.init_generate(armature_name, bone_name, obj)
         islands_dict = GenerateCoords.from_curves(obj, self.resample)
         arm.generate_bones(islands_dict, self.reverse)
-        
+
         return {"FINISHED"}
 
     def draw(self, context):
@@ -990,6 +1008,7 @@ class CT_OT_GenerateBonesCurves(Operator):
             self.report({'ERROR'}, message=f"Expected object type to be 'CURVE' or 'CURVES', not '{obj.type}'")
         if bpy.context.mode not in ['OBJECT', 'EDIT_CURVE', 'EDIT_CURVES', 'SCULPT_CURVES']:
             self.report({'ERROR'}, message=f"Expected object mode to be in: ['OBJECT', 'EDIT_CURVE', 'EDIT_CURVES', 'SCULPT_CURVES'] not '{bpy.context.mode}'")
+        self.source_obj = obj.name
         context.window_manager.invoke_props_popup(self, event)
         return self.execute(context)
 
@@ -998,7 +1017,9 @@ class CT_OT_GenerateBonesIslands(Operator):
     bl_label = "Generate Bones"
     bl_description = "Generate bones from mesh islands"
     bl_options = {"REGISTER", "UNDO"}
-    
+
+    source_obj: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
+    source_mode: bpy.props.StringProperty(options={'HIDDEN'}) # type: ignore
     reverse: bpy.props.BoolProperty(name='reverse', description='', default=False) # type: ignore
     resample: bpy.props.IntProperty(name='resample', description='', default=0, subtype='NONE', min=0) # type: ignore
     resample_on: bpy.props.BoolProperty(name='resample_on', description='', default=False) # type: ignore
@@ -1019,14 +1040,20 @@ class CT_OT_GenerateBonesIslands(Operator):
         return True
 
     def execute(self, context):
-        armature_name = get_armature_name()
+        if not self.source_obj or self.source_obj not in bpy.data.objects:
+            self.report({'ERROR'}, message='Source object not found')
+            return {"CANCELLED"}
+        obj = bpy.data.objects[self.source_obj]
+        obj_mode = self.source_mode or obj.mode
+        context.view_layer.update()
+        armature_name = get_armature_name(obj)
         bone_name = bpy.context.scene.sna_bone_name if 'sna_bone_name' in bpy.context.scene else 'bone'
         self.resample = self.resample if self.resample_on else 0
-        
-        obj, obj_mode, arm = GenerateCoords.init_generate(armature_name, bone_name)
+
+        _, _, arm = GenerateCoords.init_generate(armature_name, bone_name, obj)
         islands_dict = GenerateCoords.from_islands(obj, obj_mode, self.resample, self.modulo, self.max_loops, max_isl=500, vert_sel=self.vert_sel)
         arm.generate_bones(islands_dict, self.reverse)
-        if self.apply_weights: 
+        if self.apply_weights:
             ArmatureFuncs.auto_weight(islands_dict, arm.armature, obj, self.mix_mode)
         return {"FINISHED"}
 
@@ -1110,6 +1137,8 @@ class CT_OT_GenerateBonesIslands(Operator):
             if not obj.data.total_vert_sel:
                 self.report({'ERROR'}, message='No vertices selected')
                 return {"CANCELLED"}
+        self.source_obj = obj.name
+        self.source_mode = obj.mode
         context.window_manager.invoke_props_popup(self, event)
         return self.execute(context)
 
